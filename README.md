@@ -65,7 +65,7 @@ Initialize the blockchain with the **Hardcoded Genesis Block**.
 *   **Note**: The Genesis Block acts as the immutable anchor of the network. It pays the initial supply (Premine) to the **Admin Address** hardcoded in `genesis.go`.
 *   **Usage**: No arguments required.
 ```bash
-./sole-cli createblockchain
+./sole-cli init
 ```
 
 ### 3. Start a Node

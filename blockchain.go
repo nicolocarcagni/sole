@@ -32,12 +32,11 @@ type BlockchainIterator struct {
 }
 
 // InitBlockchain creates a new blockchain with Genesis Block
-func InitBlockchain() *Blockchain {
+func InitBlockchain() (*Blockchain, error) {
 	var lastHash []byte
 
 	if DBExists() {
-		fmt.Println("Blockchain already exists.")
-		os.Exit(1)
+		return nil, fmt.Errorf("blockchain already exists")
 	}
 
 	opts := badger.DefaultOptions(dbPath)
@@ -69,7 +68,7 @@ func InitBlockchain() *Blockchain {
 	}
 
 	blockchain := Blockchain{lastHash, db, sync.Mutex{}}
-	return &blockchain
+	return &blockchain, nil
 }
 
 // ContinueBlockchain continues an existing blockchain

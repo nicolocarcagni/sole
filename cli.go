@@ -39,12 +39,13 @@ func Execute() {
 
 func init() {
 	// createblockchain
-	var createBlockchainCmd = &cobra.Command{
-		Use:   "createblockchain",
-		Short: "Create a new blockchain",
-		Run:   createBlockchain,
+	// init (formerly createblockchain)
+	var initCmd = &cobra.Command{
+		Use:   "init",
+		Short: "Inizializza il database locale con il Blocco Genesi ufficiale SOLE.",
+		Run:   runInit,
 	}
-	rootCmd.AddCommand(createBlockchainCmd)
+	rootCmd.AddCommand(initCmd)
 
 	// createwallet
 	var createWalletCmd = &cobra.Command{
@@ -138,10 +139,18 @@ func startNode(cmd *cobra.Command, args []string) {
 	StartServer(portFlag, minerFlag, validatorPrivKey)
 }
 
-func createBlockchain(cmd *cobra.Command, args []string) {
-	chain := InitBlockchain()
-	chain.Database.Close()
-	fmt.Println("Il Sole è sorto! Blockchain creata con successo.")
+func runInit(cmd *cobra.Command, args []string) {
+	chain, err := InitBlockchain()
+	if err != nil {
+		fmt.Println("⚠️  La blockchain esiste già. Usa './sole-cli startnode' per avviare.")
+		return
+	}
+	defer chain.Database.Close()
+
+	fmt.Println("\n☀️  SOLE Blockchain Inizializzata!")
+	fmt.Printf("- Genesis Hash: %x\n", chain.LastHash)
+	fmt.Println("- Network: Unisalento Mainnet")
+	fmt.Println("- Pronti a partire. Esegui 'createwallet' o 'startnode'.")
 }
 
 func createWallet(cmd *cobra.Command, args []string) {
