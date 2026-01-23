@@ -86,7 +86,7 @@ func newKeyPair() (ecdsa.PrivateKey, []byte) {
 func ValidateAddress(address string) bool {
 	pubKeyHash, err := Base58Decode([]byte(address))
 	if err != nil {
-		log.Panic(err)
+		return false
 	}
 	if len(pubKeyHash) < 4 {
 		return false

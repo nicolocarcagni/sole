@@ -121,6 +121,14 @@ func init() {
 func startNode(cmd *cobra.Command, args []string) {
 	fmt.Printf("Avvio nodo SOLE su porta %d...\n", portFlag)
 
+	// Check DB existence if not mining (or even if mining, usually need DB)
+	// But ContinueBlockchain inside StartServer or Network will handle it?
+	// The request asked for check in startnode.
+	if !DBExists() {
+		fmt.Println("⚠️  Database non trovato. Hai eseguito './sole-cli init'?")
+		os.Exit(1)
+	}
+
 	var validatorPrivKey *ecdsa.PrivateKey
 
 	if minerFlag != "" {
@@ -129,19 +137,24 @@ func startNode(cmd *cobra.Command, args []string) {
 		// Load wallet for this address
 		wallets, err := CreateWallets()
 		if err != nil {
+			if os.IsNotExist(err) {
+				fmt.Printf("⛔ ERRORE: Chiave privata non trovata per l'indirizzo %s. File wallet.dat mancante.\n", minerFlag)
+				os.Exit(1)
+			}
 			log.Panic("Errore caricamento wallets:", err)
 		}
 
-		wallet := wallets.GetWallet(minerFlag)
-		if wallet.PrivateKey == nil {
-			log.Panic("Errore: Wallet non trovato per indirizzo ", minerFlag)
+		wallet := wallets.GetWalletRef(minerFlag)
+		if wallet == nil {
+			fmt.Printf("⛔ ERRORE: Chiave privata non trovata per l'indirizzo %s. Non puoi minare senza possedere il wallet.\n", minerFlag)
+			os.Exit(1)
 		}
 
 		privKey := wallet.GetPrivateKey()
 		validatorPrivKey = &privKey
 
 		// Print validator public key for registration
-		pubKeyHex := GetValidatorHex(wallet)
+		pubKeyHex := GetValidatorHex(*wallet)
 		fmt.Printf("Validator PubKey: %s\n", pubKeyHex)
 
 		// Authorization Check
@@ -179,7 +192,8 @@ func createWallet(cmd *cobra.Command, args []string) {
 
 func getBalance(cmd *cobra.Command, args []string) {
 	if !ValidateAddress(addressFlag) {
-		log.Panic("Errore: Indirizzo non valido")
+		fmt.Println("⛔ ERRORE: L'indirizzo fornito non è valido.")
+		os.Exit(1)
 	}
 	chain := ContinueBlockchain(addressFlag)
 	defer chain.Database.Close()
@@ -202,10 +216,16 @@ func getBalance(cmd *cobra.Command, args []string) {
 
 func send(cmd *cobra.Command, args []string) {
 	if !ValidateAddress(fromFlag) {
-		log.Panic("Errore: Indirizzo Mittente non valido")
+		fmt.Println("⛔ ERRORE: L'indirizzo Mitente fornito non è valido.")
+		os.Exit(1)
 	}
 	if !ValidateAddress(toFlag) {
-		log.Panic("Errore: Indirizzo Destinatario non valido")
+		fmt.Println("⛔ ERRORE: L'indirizzo Destinatario fornito non è valido.")
+		os.Exit(1)
+	}
+	if amountFlag <= 0 {
+		fmt.Println("⛔ ERRORE: L'importo deve essere maggiore di zero.")
+		os.Exit(1)
 	}
 
 	// Main logic handling
