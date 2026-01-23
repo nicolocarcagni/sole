@@ -1,0 +1,23 @@
+# Ignora i binari compilati
+sole-cli
+sole-cli.exe
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Ignora i file chiave/wallet
+wallet.dat
+wallet_*.dat
+*.key
+*.pem
+
+# Ignora le cartelle del database locale
+db/
+db_*
+tmp/
+
+# Ignora file di sistema/IDE
+.DS_Store
+.idea/
+.vscode/
