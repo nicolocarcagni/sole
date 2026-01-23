@@ -29,6 +29,7 @@ var (
 	amountFlag  int
 	portFlag    int
 	minerFlag   string
+	apiPortFlag int
 )
 
 func Execute() {
@@ -115,6 +116,7 @@ func init() {
 	}
 	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "Port to listen on")
 	startNodeCmd.Flags().StringVar(&minerFlag, "miner", "", "Miner address")
+	startNodeCmd.Flags().IntVar(&apiPortFlag, "api-port", 8080, "API Server Port")
 	rootCmd.AddCommand(startNodeCmd)
 }
 
@@ -165,7 +167,15 @@ func startNode(cmd *cobra.Command, args []string) {
 		fmt.Println("✅ Validatore Autorizzato riconosciuto. Avvio motore di consenso...")
 	}
 
-	StartServer(portFlag, minerFlag, validatorPrivKey)
+	// Initialize P2P Server
+	server := NewServer(portFlag, minerFlag, validatorPrivKey)
+	defer server.Blockchain.Database.Close()
+
+	// Start API Server
+	go StartRestServer(server, apiPortFlag)
+
+	// Start P2P Loop (Blocking)
+	server.Start()
 }
 
 func runInit(cmd *cobra.Command, args []string) {

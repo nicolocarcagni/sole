@@ -4,6 +4,7 @@ go 1.25.6
 
 require (
 	github.com/dgraph-io/badger/v3 v3.2103.5
+	github.com/gorilla/mux v1.8.1
 	github.com/libp2p/go-libp2p v0.46.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.47.0

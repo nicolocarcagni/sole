@@ -50,8 +50,8 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 }
 
-// StartServer starts the P2P server
-func StartServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateKey) {
+// NewServer initializes the P2P server
+func NewServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateKey) *Server {
 	// Create LibP2P Host
 	priv, _, _ := crypto.GenerateKeyPair(crypto.Secp256k1, 256)
 
@@ -66,9 +66,8 @@ func StartServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateK
 	}
 
 	chain := ContinueBlockchain("")
-	defer chain.Database.Close()
 
-	server := Server{
+	server := &Server{
 		Host:             h,
 		Blockchain:       chain,
 		MinerAddr:        minerAddress,
@@ -88,14 +87,19 @@ func StartServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateK
 	}
 
 	fmt.Printf("Server listening on %s with peer ID %s\n", h.Addrs()[0], h.ID().String())
+	return server
+}
+
+// Start runs the P2P server loop (blocking)
+func (s *Server) Start() {
 	fmt.Println("Waiting for connections...")
 
 	go func() {
 		for {
 			time.Sleep(10 * time.Second)
-			peers := h.Network().Peers()
+			peers := s.Host.Network().Peers()
 			for _, p := range peers {
-				server.SendVersion(p)
+				s.SendVersion(p)
 			}
 		}
 	}()
