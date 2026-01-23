@@ -143,6 +143,13 @@ func startNode(cmd *cobra.Command, args []string) {
 		// Print validator public key for registration
 		pubKeyHex := GetValidatorHex(wallet)
 		fmt.Printf("Validator PubKey: %s\n", pubKeyHex)
+
+		// Authorization Check
+		if !IsAuthorizedValidator(pubKeyHex) {
+			fmt.Printf("⛔ ERRORE: L'indirizzo %s non è un Validatore Autorizzato. Impossibile avviare il mining.\n", minerFlag)
+			os.Exit(1)
+		}
+		fmt.Println("✅ Validatore Autorizzato riconosciuto. Avvio motore di consenso...")
 	}
 
 	StartServer(portFlag, minerFlag, validatorPrivKey)
