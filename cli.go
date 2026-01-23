@@ -74,7 +74,13 @@ func init() {
 	}
 	printWalletCmd.Flags().StringVar(&addressFlag, "address", "", "Address to print")
 	printWalletCmd.MarkFlagRequired("address")
-	rootCmd.AddCommand(printWalletCmd)
+	// listaddresses
+	var listAddressesCmd = &cobra.Command{
+		Use:   "listaddresses",
+		Short: "Lists all addresses in the local wallet file",
+		Run:   listAddresses,
+	}
+	rootCmd.AddCommand(listAddressesCmd)
 
 	// send
 	var sendCmd = &cobra.Command{
@@ -322,4 +328,22 @@ func printWallet(cmd *cobra.Command, args []string) {
 	fmt.Printf("Public Key:   %s\n", pubKeyHex)
 	fmt.Printf("Private Key:  %s\n", privKeyHex)
 	fmt.Println("======================")
+}
+
+func listAddresses(cmd *cobra.Command, args []string) {
+	wallets, err := CreateWallets()
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Println("Nessun portafoglio trovato.")
+			return
+		}
+		log.Panic(err)
+	}
+	addresses := wallets.GetAddresses()
+
+	fmt.Println("=== Local Wallets ===")
+	for _, address := range addresses {
+		fmt.Println(address)
+	}
+	fmt.Println("=====================")
 }
