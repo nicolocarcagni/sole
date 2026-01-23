@@ -17,6 +17,7 @@ Built in Go, SOLE features a custom **Proof of Authority (PoA)** consensus mecha
 *   **Wallet System**: Secure wallet management with ECDSA key pairs and Address generation (Base58Check).
 *   **CLI Interface**: Robust command-line tool for interacting with the blockchain (wallet management, sending transactions, node operation).
 *   **UTXO Model**: Bitcoin-like Unspent Transaction Output model for tracking balances.
+*   **REST API**: Integrated HTTP Gateway (`gorilla/mux`) for external application interaction.
 
 ## 🏗 Architecture
 
@@ -107,6 +108,19 @@ Export your wallet's Private Key (in Hex format) for backup or Validator configu
 ```bash
 ./sole-cli printwallet --address <ADDRESS>
 ```
+
+### 8. REST API Gateway 🌍
+Interact with the node via HTTP.
+*   **Enable**: Add `--api-port <PORT>` to `startnode`.
+*   **Default**: Port 8080.
+```bash
+./sole-cli startnode --api-port 8080
+```
+*   **Endpoints**:
+    *   `GET /blocks/tip` (Status)
+    *   `GET /balance/{address}`
+    *   `POST /tx/send`
+*   👉 **[Full API Documentation](docs/api_reference.md)**
 
 ## 🔧 Configuration
 
