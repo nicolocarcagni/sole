@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/ecdsa"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"os"
@@ -74,6 +75,8 @@ func init() {
 	}
 	printWalletCmd.Flags().StringVar(&addressFlag, "address", "", "Address to print")
 	printWalletCmd.MarkFlagRequired("address")
+	rootCmd.AddCommand(printWalletCmd)
+
 	// listaddresses
 	var listAddressesCmd = &cobra.Command{
 		Use:   "listaddresses",
@@ -320,13 +323,14 @@ func printWallet(cmd *cobra.Command, args []string) {
 	}
 
 	privKey := wallet.GetPrivateKey()
-	pubKeyHex := fmt.Sprintf("%x", wallet.PublicKey)
-	privKeyHex := fmt.Sprintf("%x", privKey.D.Bytes())
+	// Using hex.EncodeToString as requested for clarity
+	pubKeyHex := hex.EncodeToString(wallet.PublicKey)
+	privKeyHex := hex.EncodeToString(privKey.D.Bytes())
 
 	fmt.Println("=== Wallet Details ===")
-	fmt.Printf("Address:      %s\n", addressFlag)
-	fmt.Printf("Public Key:   %s\n", pubKeyHex)
-	fmt.Printf("Private Key:  %s\n", privKeyHex)
+	fmt.Printf("Address:          %s\n", addressFlag)
+	fmt.Printf("Public Key (Hex): %s\n", pubKeyHex)
+	fmt.Printf("Private Key:      %s\n", privKeyHex)
 	fmt.Println("======================")
 }
 

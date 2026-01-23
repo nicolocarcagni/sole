@@ -7,7 +7,7 @@ import (
 const (
 	GenesisTimestamp    = 1768947120
 	GenesisCoinbaseData = "Lu sule, lu mare, lu ientu. Unisalento 2026."
-	GenesisAdminAddress = "1NhRoNbSLwpSfCquAkYABpzwp9D8zKAYs4"
+	GenesisAdminAddress = "15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw"
 	GenesisReward       = 5000000
 )
 
