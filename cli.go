@@ -28,7 +28,7 @@ var (
 	addressFlag string
 	fromFlag    string
 	toFlag      string
-	amountFlag  int
+	amountFlag  float64
 	portFlag    int
 	minerFlag   string
 	apiPortFlag int
@@ -97,7 +97,7 @@ func init() {
 	}
 	sendCmd.Flags().StringVar(&fromFlag, "from", "", "Source address")
 	sendCmd.Flags().StringVar(&toFlag, "to", "", "Destination address")
-	sendCmd.Flags().IntVar(&amountFlag, "amount", 0, "Amount to send")
+	sendCmd.Flags().Float64Var(&amountFlag, "amount", 0, "Amount to send")
 	sendCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Print transaction hex without sending")
 	sendCmd.MarkFlagRequired("from")
 	sendCmd.MarkFlagRequired("to")
@@ -279,7 +279,11 @@ func send(cmd *cobra.Command, args []string) {
 	chain := ContinueBlockchainSnapshot(snapshotPath)
 	defer chain.Database.Close()
 
-	tx := NewUTXOTransaction(fromFlag, toFlag, int64(amountFlag), chain)
+	// Conversion: SOLE (Float) -> Fotoni (Int64)
+	amountInt := int64(amountFlag * 100000000)
+	fmt.Printf("💸 Invio in corso: %.8f SOLE (%d Fotoni)\n", amountFlag, amountInt)
+
+	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, chain)
 
 	if dryRunFlag {
 		fmt.Printf("%x", tx.Serialize())
