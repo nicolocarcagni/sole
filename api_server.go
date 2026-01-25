@@ -23,12 +23,22 @@ func StartRestServer(server *Server, port int) {
 	router := mux.NewRouter()
 	router.Use(commonMiddleware)
 
-	// Endpoints
-	router.HandleFunc("/balance/{address}", rs.getBalance).Methods("GET")
-	router.HandleFunc("/utxos/{address}", rs.getUTXOs).Methods("GET")
-	router.HandleFunc("/blocks/tip", rs.getTip).Methods("GET")
-	router.HandleFunc("/blocks/{hash}", rs.getBlock).Methods("GET")
-	router.HandleFunc("/tx/send", rs.sendTx).Methods("POST")
+	// Rate Limiters
+	readLimiter := NewIPRateLimiter(20, 30) // 20 req/s, burst 30
+	writeLimiter := NewIPRateLimiter(5, 10) // 5 req/s, burst 10
+
+	// Middleware Wrappers
+	readMW := RateLimitMiddleware(readLimiter)
+	writeMW := RateLimitMiddleware(writeLimiter)
+
+	// Endpoints (Applied specific rate limits)
+	router.Handle("/balance/{address}", readMW(http.HandlerFunc(rs.getBalance))).Methods("GET")
+	router.Handle("/utxos/{address}", readMW(http.HandlerFunc(rs.getUTXOs))).Methods("GET")
+	router.Handle("/blocks/tip", readMW(http.HandlerFunc(rs.getTip))).Methods("GET")
+	router.Handle("/blocks/{hash}", readMW(http.HandlerFunc(rs.getBlock))).Methods("GET")
+
+	// Stricter limit for Sending Transactions
+	router.Handle("/tx/send", writeMW(http.HandlerFunc(rs.sendTx))).Methods("POST")
 
 	addr := fmt.Sprintf(":%d", port)
 	fmt.Printf("🚀 API Server started on http://localhost%s\n", addr)
