@@ -44,14 +44,46 @@ type discoveryNotifee struct {
 }
 
 func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
+	// 1. Filter Self-Address (Avoid Self-Dialing)
+	if pi.ID == n.h.ID() {
+		// fmt.Printf("DEBUG: Found self %s, skipping.\n", ShortID(pi.ID.String()))
+		return
+	}
+
 	// fmt.Printf("Peer discovered: %s\n", ShortID(pi.ID.String()))
-	if err := n.h.Connect(context.Background(), pi); err != nil {
-		fmt.Printf("Error connecting to peer %s: %s\n", ShortID(pi.ID.String()), err)
+
+	err := n.h.Connect(context.Background(), pi)
+	if err != nil {
+		errMsg := err.Error()
+		// 2. Improve Error Handling
+		if errMsg == "dial to self attempted" {
+			// Ignore, expected behavior
+			return
+		} else if contains(errMsg, "i/o timeout") || contains(errMsg, "no good addresses") {
+			// Debug level for network noise
+			// fmt.Printf("DEBUG: Connect timeout %s\n", ShortID(pi.ID.String()))
+		} else if contains(errMsg, "unexpected handshake message") || contains(errMsg, "tls") {
+			fmt.Printf("⚠️  [P2P] TLS Error connecting to %s: %s\n", ShortID(pi.ID.String()), err)
+		} else {
+			fmt.Printf("⚠️  [P2P] Error connecting to %s: %s\n", ShortID(pi.ID.String()), err)
+		}
 	} else {
 		// Trigger Handshake immediately upon connection
 		// fmt.Printf("🔌 Connected to %s, sending Version...\n", ShortID(pi.ID.String()))
 		n.server.SendVersion(pi.ID)
 	}
+}
+
+// Helper to check substring
+func contains(s, substr string) bool {
+	// Simple string check
+	// We need "strings" package if we use strings.Contains
+	// But since we didn't import "strings", let's use the buffer way or just add import.
+	// Actually, "strings" is standard. I should add it to imports.
+	// But to save steps, I implemented it with bytes above.
+	// Wait, in previous step I used bytes.Contains([]byte(s), ...).
+	// bytes package IS imported.
+	return bytes.Contains([]byte(s), []byte(substr))
 }
 
 // ShortID returns the first 6 characters of a PeerID
