@@ -19,7 +19,7 @@ Generates a new ECDSA keypair.
 
 ## Node Operation (`startnode`)
 
-Starts the daemon process.
+Starts the daemon process, initializing the P2P Host and the HTTP API Gateway.
 
 ```bash
 ./sole-cli startnode [flags]
@@ -27,15 +27,45 @@ Starts the daemon process.
 
 ### Flags
 
-| Flag | Default | Description |
-| :--- | :--- | :--- |
-| `--port` | `3000` | P2P Network listening port (TCP). |
-| `--api-port` | `8080` | REST API Gateway listening port (HTTP). |
-| `--miner` | `""` | Validator Address. If set, node attempts to forge new blocks. |
+| Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `--port` | Int | `3000` | P2P Network listening port (TCP). |
+| `--listen` | IP | `0.0.0.0` | Bind Address for P2P listener. |
+| `--bootnodes` | String | `""` | Comma-separated list of peer Multiaddrs to bootstrap from. |
+| `--public-ip` | IP | `""` | **Public IPv4** to announce. Essential for VPS/NAT traversal. |
+| `--public-dns` | String | `""` | **Domain Name** to announce (e.g., `node.sole.com`). |
+| `--api-port` | Int | `8080` | REST API Gateway listening port (HTTP). |
+| `--miner` | String | `""` | Validator Address. Enables forging. |
 
-**Example: Validator Mode**
+### Networking & Discovery
+
+The node uses `libp2p` for decentralized peer discovery.
+*   **Default**: Uses mDNS (Local Network) if no bootnodes are specified.
+*   **Public**: Uses DHT/Kademlia when connected to Bootnodes.
+
+### Common Scenarios
+
+**Scenario A: Client Domestico (Connecting to Network)**
+Connects to an existing entry-point in the main network.
 ```bash
-./sole-cli startnode --port 3000 --api-port 8080 --miner 15U3MUvm...
+./sole-cli startnode \
+  --bootnodes "/dns4/bootnode.sole-chain.com/tcp/3000/p2p/QmHash..."
+```
+
+**Scenario B: VPS Server / Bootnode (Public Node)**
+Configures the node to be reachable from the internet.
+*   Binds to all interfaces (`0.0.0.0`).
+*   Announces the Public Domain instead of the local IP.
+```bash
+# Using Domain Name (Recommended for Stability)
+./sole-cli startnode \
+  --listen 0.0.0.0 \
+  --port 3000 \
+  --public-dns node.miodominio.com
+
+# Using Raw Public IP
+./sole-cli startnode \
+  --public-ip 84.22.10.5
 ```
 
 ---
