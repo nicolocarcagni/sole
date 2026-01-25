@@ -31,7 +31,10 @@ const (
 )
 
 var (
-	commandLength = 12
+	commandLength    = 12
+	DefaultBootnodes = []string{
+		"/dns4/sole.nicolocarcagni.dev/tcp/3000/p2p/12D3KooWCcdQbeABiMELv92S7XrtMZzzb7ZG6wrmQBhVm8JJR4t1",
+	}
 )
 
 // Server represents the P2P server
@@ -178,6 +181,12 @@ func NewServer(cfg ServerConfig) *Server {
 		log.Panic(err)
 	}
 
+	// Using Default Bootnodes if needed
+	bootnodesToUse := cfg.Bootnodes
+	if len(bootnodesToUse) == 0 {
+		bootnodesToUse = DefaultBootnodes
+	}
+
 	chain := ContinueBlockchain("")
 
 	server := &Server{
@@ -200,8 +209,8 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 
 	// Bootstrap (Internet Discovery)
-	if len(cfg.Bootnodes) > 0 {
-		go server.Bootstrap(cfg.Bootnodes)
+	if len(bootnodesToUse) > 0 {
+		go server.Bootstrap(bootnodesToUse)
 	}
 
 	// --- PRETTY STARTUP SUMMARY ---
@@ -260,6 +269,12 @@ func (s *Server) Bootstrap(bootnodes []string) {
 			continue
 		}
 
+		// Self-Dial Check
+		if pi.ID == s.Host.ID() {
+			fmt.Println("ℹ️  Skipping bootnode (Self-Dial detected)")
+			continue
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		err = s.Host.Connect(ctx, *pi)
 		cancel()
@@ -276,7 +291,7 @@ func (s *Server) Bootstrap(bootnodes []string) {
 
 	if validNodes > 0 {
 		fmt.Println("🚀 Bootstrap completed successfully.")
-	} else {
+	} else if len(bootnodes) > 0 {
 		fmt.Println("⚠️  Bootstrap failed: No bootnodes reachable.")
 	}
 }
