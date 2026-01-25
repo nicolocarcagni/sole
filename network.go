@@ -68,9 +68,10 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 			fmt.Printf("⚠️  [P2P] Error connecting to %s: %s\n", ShortID(pi.ID.String()), err)
 		}
 	} else {
-		// Trigger Handshake immediately upon connection
-		// fmt.Printf("🔌 Connected to %s, sending Version...\n", ShortID(pi.ID.String()))
-		n.server.SendVersion(pi.ID)
+		// Trigger Handshake immediately upon connection (only if running as Server)
+		if n.server != nil {
+			n.server.SendVersion(pi.ID)
+		}
 	}
 }
 

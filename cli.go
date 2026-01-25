@@ -264,62 +264,79 @@ func send(cmd *cobra.Command, args []string) {
 	// P2P Injection Logic
 	fmt.Println("Ricerca nodi per inviare la transazione...")
 
+	// Panic Recovery
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("⚠️  Recuperato da Panic in 'send': %v\n", r)
+		}
+	}()
+
 	// Create transient host
 	ctx := context.Background()
 	h, err := libp2p.New()
 	if err != nil {
 		log.Panic(err)
 	}
+	defer h.Close()
 
 	// Setup mDNS to find peers
-	notifee := &discoveryNotifee{h: h} // We need to adapt notifee or use channel
-	// My discoveryNotifee in network.go creates connections automatically.
-	// I can reuse it but I need to know WHEN connected to send.
-
-	// Let's copy/paste simple mDNS logic here or modify StartServer?
-	// StartServer is tailored for Daemon.
-
-	// Custom Notify for Send
+	// Note: We pass nil as server because we are just a transient client.
+	// HandlePeerFound checks for nil server now.
+	notifee := &discoveryNotifee{h: h, server: nil}
 	ser := mdns.NewMdnsService(h, discoveryNamespace, notifee)
 	if err := ser.Start(); err != nil {
 		log.Panic(err)
 	}
 
 	// Wait for connection and send
-	// We need to wait a bit for mDNS
 	fmt.Println("In attesa di connessione a un peer...")
 	found := false
+	timeout := time.After(10 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
 
-	// We loop and check peers
-	for i := 0; i < 10; i++ {
-		time.Sleep(1 * time.Second)
-		peers := h.Network().Peers()
-		if len(peers) > 0 {
-			targetPeer := peers[0]
-			fmt.Printf("Invio transazione a %s\n", targetPeer.String())
+	// Loop Event Detection
+	for {
+		select {
+		case <-timeout:
+			fmt.Println("⏰ Timeout: Nessun peer trovato in 10 secondi. Assicurati che un nodo sia attivo.")
+			return
+		case <-ticker.C:
+			peers := h.Network().Peers()
+			if len(peers) > 0 {
+				targetPeer := peers[0]
+				// Avoid self? (Though CLI has different ID than Node usually, unless sharing key)
 
-			// Serialize and Send
-			data := TxMsg{h.ID().String(), tx.Serialize()}
-			payload := GobEncode(data)
-			request := append(CommandToBytes("tx"), payload...)
+				fmt.Printf("Invio transazione a %s\n", targetPeer.String())
 
-			stream, err := h.NewStream(ctx, targetPeer, protocolID)
-			if err != nil {
-				log.Panic(err)
+				// Serialize and Send
+				data := TxMsg{h.ID().String(), tx.Serialize()}
+				payload := GobEncode(data)
+				request := append(CommandToBytes("tx"), payload...)
+
+				stream, err := h.NewStream(ctx, targetPeer, protocolID)
+				if err != nil {
+					fmt.Printf("⚠️  Errore apertura stream: %s\n", err)
+					continue
+				}
+
+				_, err = stream.Write(request)
+				if err != nil {
+					fmt.Printf("⚠️  Errore invio dati: %s\n", err)
+					stream.Close()
+					continue
+				}
+				time.Sleep(500 * time.Millisecond) // Wait for write flush
+				stream.Close()
+
+				fmt.Println("✅ Transazione inviata con successo!")
+				found = true
+				goto END_LOOP
 			}
-			_, err = stream.Write(request)
-			if err != nil {
-				log.Panic(err)
-			}
-			time.Sleep(500 * time.Millisecond) // Wait for write flush
-			stream.Close()
-
-			fmt.Println("Transazione inviata con successo!")
-			found = true
-			break
 		}
 	}
 
+END_LOOP:
 	if !found {
 		fmt.Println("Errore: Nessun peer trovato per inviare la transazione.")
 	}
