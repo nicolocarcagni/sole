@@ -1,93 +1,53 @@
-# SOLE CLI Reference Manual
+# SOLE CLI Manual
 
-The `sole-cli` is the command-line interface for interacting with the SOLE network.
-
-## Global Flags
-*   `--help`: Show help for any command.
+The `sole-cli` is the comprehensive tool for managing your node and wallet.
 
 ---
 
-## 🏗 Initialization
+## Global Commands
 
 ### `init`
-Initializes a new local blockchain node with the official Unisalento Genesis Block.
-*   **Usage**: `./sole-cli init`
-*   **Description**: Creates the database files (`tmp/blocks`) and writes the hardcoded Genesis Block. Safe to run; if the DB exists, it will exit gracefully.
-*   **Example Output**:
-    ```
-    ☀️  SOLE Blockchain Inizializzata!
-    - Genesis Hash: 7d58f0...
-    - Network: Unisalento Mainnet
-    ```
-
----
-
-## 💰 Wallet Management
+Initializes the blockchain database in `./data/blocks`.
+*   **Use Condition**: Must be run once before starting a node if the database doesn't exist.
+*   **Effect**: Creates Genesis Block (PoA).
 
 ### `createwallet`
-Generates a new ECDSA key pair and saves it to `wallet.dat`.
-*   **Usage**: `./sole-cli createwallet`
-*   **Description**: Creates a new address for receiving funds.
-*   **Example Output**: `Nuovo portafoglio creato: 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa`
-
-### `listaddresses`
-Lists all addresses stored in the local `wallet.dat` file.
-*   **Usage**: `./sole-cli listaddresses`
-*   **Description**: Useful for seeing all your available accounts.
-
-### `getbalance`
-Checks the balance of a specific address.
-*   **Usage**: `./sole-cli getbalance --address <ADDRESS>`
-*   **Description**: Scans the local blockchain copy for UTXOs belonging to the address.
-*   **Requires**: Local blockchain database (run `init` or `startnode` first).
-
-### `printwallet`
-Exports the sensitive keys for a specific address.
-*   **Usage**: `./sole-cli printwallet --address <ADDRESS>`
-*   **Warning**: Displays the **Private Key** on screen. Use with caution.
-*   **Use Case**: Backups or configuring a Validator node.
+Generates a new ECDSA keypair.
+*   **Output**: Saves keys to `wallet.dat`. Prints new Address (Base58).
 
 ---
 
-## 💸 Transactions
+## Node Operation (`startnode`)
+
+Starts the daemon process.
+
+```bash
+./sole-cli startnode [flags]
+```
+
+### Flags
+
+| Flag | Default | Description |
+| :--- | :--- | :--- |
+| `--port` | `3000` | P2P Network listening port (TCP). |
+| `--api-port` | `8080` | REST API Gateway listening port (HTTP). |
+| `--miner` | `""` | Validator Address. If set, node attempts to forge new blocks. |
+
+**Example: Validator Mode**
+```bash
+./sole-cli startnode --port 3000 --api-port 8080 --miner 15U3MUvm...
+```
+
+---
+
+## Transaction Tools
 
 ### `send`
-Transfers tokens from one wallet to another.
-*   **Usage**: `./sole-cli send --from <SENDER> --to <RECEIVER> --amount <AMOUNT>`
-*   **Flags**:
-    *   `--from`: Sender Address (must be in local `wallet.dat`).
-    *   `--to`: Receiver Address.
-    *   `--amount`: Integer amount of SOLE to send.
-*   **Behavior**: Creates a transaction, attempts to discover peers via P2P user `mDNS`, broadcast the TX to the network, and waits for confirmation.
+Utilities for transferring funds.
 
----
+```bash
+./sole-cli send --from <ADDR> --to <ADDR> --amount <INT> [flags]
+```
 
-## 🌐 Node Operation
-
-### `startnode`
-Starts the P2P node daemon.
-*   **Usage**: `./sole-cli startnode [flags]`
-*   **Flags**:
-    *   `--port`: TCP port to listen on (Default: 3000).
-    *   `--miner <ADDRESS>`: Enable Validator/Forging mode (must use an authorized address).
-*   **Description**: Connects to the network, synchronizes blocks, and (if configured) forges new blocks.
-
-### `printchain`
-Dumps the entire local blockchain to stdout.
-*   **Usage**: `./sole-cli printchain`
-*   **Description**: Useful for debugging and verifying chain state (Heights, Hashes, Confirmations).
-
----
-
-## 🔧 Troubleshooting
-
-### "Error: Wallet not found"
-Ensure `wallet.dat` exists in the current directory. Run `createwallet` if needed.
-
-### "Blockchain already exists"
-If `init` errors, it means you already have a database. This is fine. If you want to wipe it and start fresh, run `rm -rf tmp/` (Warning: Irreversible).
-
-### Node not connecting
-*   Ensure both nodes are on the same network (if using mDNS).
-*   Check firewall settings for the port (Default 3000).
-*   Ensure both nodes are running the same binary version.
+**Options**
+*   **`--dry-run`**: Prints the raw signed transaction Hex to stdout **without** broadcasting it. Useful for API integration or offline signing.

@@ -1,146 +1,73 @@
-# SOLE Blockchain API Reference
+# SOLE API Reference
 
-This document provides the official reference for the **SOLE REST API**, a gateway that allows external applications (Web Wallets, Mobile Apps, Explorers) to interact with the blockchain network via standard HTTP/JSON requests.
+The SOLE Node exposes a RESTful API for external interaction (Wallets, Explorers, Monitors).
 
-## 🚀 Activation & Configuration
-
-The API Server runs alongside the P2P node. To enable it, use the `--api-port` flag when starting the node.
-
-*   **Command**: `./sole-cli startnode --api-port 8080`
-*   **Default Base URL**: `http://localhost:8080`
-*   **CORS**: Enabled by default (`Allow-Origin: *`) to support browser-based applications.
+*   **Default Port**: `8080`
+*   **Content-Type**: `application/json`
 
 ---
 
-## 📡 Endpoints
+## Endpoints
 
-### 1. Get Chain Status (Tip)
-Retrieve the current height and the hash of the latest block (Best Block). Useful for synchronization checks.
+### 1. Check Balance
+Retrieves the confirmed balance of a specific address.
 
-*   **Method**: `GET`
-*   **Endpoint**: `/blocks/tip`
-*   **Description**: Returns the latest block metadata.
+**Request**
+`GET /balance/{address}`
 
-#### Example Request
-```bash
-curl http://localhost:8080/blocks/tip
-```
-
-#### Example Response
+**Response**
 ```json
 {
-  "height": 42,
-  "hash": "0000abc123..."
+  "address": "15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw",
+  "balance": 500000000 // In Fotoni (Smallest Unit)
 }
 ```
 
----
-
-### 2. Get Address Balance
-Retrieve the current balance and UTXO set for a specific address.
-
-*   **Method**: `GET`
-*   **Endpoint**: `/balance/{address}`
-*   **Parameters**:
-    *   `address` (Path): The Base58Check address to query (e.g., `1A1zP1...`).
-*   **Description**: Returns the confirmed balance in Fotoni (base unit).
-
-#### Example Request
+**Example**
 ```bash
-curl http://localhost:8080/balance/1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa
-```
-
-#### Example Response
-```json
-{
-  "address": "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa",
-  "balance": 150000000
-}
+curl -s http://localhost:8080/balance/15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw
 ```
 
 ---
 
-### 3. Get Block Details
-Retrieve full details of a specific block by its hash.
+### 2. Send Transaction
+Broadcasts a signed transaction to the P2P network.
 
-*   **Method**: `GET`
-*   **Endpoint**: `/blocks/{hash}`
-*   **Parameters**:
-    *   `hash` (Path): The Hex-encoded hash of the block.
-*   **Description**: Returns the block header and list of transactions.
+**Request**
+`POST /tx/send`
 
-#### Example Request
-```bash
-curl http://localhost:8080/blocks/7d58f07fe2f7726c15f71b34beaf04fc11038a6cca775bb17aa94323277558bb
-```
-
-#### Example Response
-```json
-{
-  "Timestamp": 1768947120,
-  "Transactions": [ ... ],
-  "PrevBlockHash": "...",
-  "Hash": "7d58f0...",
-  "Height": 0,
-  "Validator": "...",
-  "Signature": "..."
-}
-```
-
----
-
-### 4. Send Transaction (Broadcast)
-Submit a signed transaction to the network.
-
-*   **Method**: `POST`
-*   **Endpoint**: `/tx/send`
-*   **Description**: Accepts a raw, signed transaction (serialized in Hex), validates it, adds it to the node's Mempool, and broadcasts it to P2P peers.
-
-#### Request Body (JSON)
 | Field | Type | Description |
 | :--- | :--- | :--- |
-| `hex` | String | The full transaction struct serialized to Hex bytes. |
+| `hex` | `string` | The raw, signed transaction bytes encoded in Hex. |
 
-#### Example Request
-```bash
-curl -X POST http://localhost:8080/tx/send \
-     -H "Content-Type: application/json" \
-     -d '{"hex": "01000000..."}'
-```
-
-#### Example Response
+**Response**
 ```json
 {
   "status": "success",
-  "txid": "e3b0c442..."
+  "txid": "775a47b20d299aceeeaf56b5a7404b2534f84f524aceefd8dc05ee1c29b50d27"
 }
 ```
 
-#### Error Response
-```json
-{
-  "error": "Transaction invalid"
-}
+**Example**
+```bash
+# Payload must be a JSON object containing the hex string
+curl -X POST http://localhost:8080/tx/send \
+     -H "Content-Type: application/json" \
+     -d '{"hex": "010000..."}'
 ```
 
 ---
 
-## 🔄 Example Workflow: Sending from a Light App
+### 3. Chain Info
+Getting the current state of the blockchain tip.
 
-This is how a mobile app or web wallet would interact with the SOLE API to send tokens without downloading the blockchain.
+**Request**
+`GET /blocks/tip`
 
-1.  **Get Balance & UTXOs**:
-    The App calls `GET /balance/{UserAddr}` to know how many tokens are available and which UTXOs to spend.
-
-2.  **Create Transaction (Offline)**:
-    The App uses a local library (using the User's Private Key) to:
-    *   Select inputs (UTXOs).
-    *   Create outputs (Destination + Change).
-    *   **Sign** the transaction (ECDSA).
-    *   Serialize parameters to a Hex string.
-
-3.  **Broadcast**:
-    The App sends the Hex string to the node via `POST /tx/send`.
-
-4.  **Confirm**:
-    The node validates the signature and propagates the Tx. The App can poll `/blocks/tip` or listen for the TxID to verify confirmation.
+**Response**
+```json
+{
+  "height": 105,
+  "hash": "3efde2efcf587408ec288bd0cebf4c42da62685fc955dd77272d65fd93a3e7d4"
+}
+```
