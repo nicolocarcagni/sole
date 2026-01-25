@@ -16,9 +16,9 @@ The ecosystem follows a decoupled, **Hybrid Network** architecture:
 
 ```mermaid
 graph LR
-    A[Telegram Bot/Apps] <-->|HTTPS| B(Public VPS Node);
-    B <-->|P2P/Internet| C[Other VPS Nodes];
-    C <-->|NAT Traversal| D[Home Node (Private)];
+    A["Telegram Bot/Apps"] <-->|HTTPS| B("Public VPS Node");
+    B <-->|P2P/Internet| C["Other VPS Nodes"];
+    C <-->|NAT Traversal| D["Home Node (Private)"];
     B -->|Persist| E[BadgerDB];
 ```
 
