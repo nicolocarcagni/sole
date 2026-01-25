@@ -10,54 +10,50 @@
 
 ## 🏗 Architecture
 
-The ecosystem follows a decoupled architecture separating the Core Node from client interfaces.
+The ecosystem follows a decoupled, **Hybrid Network** architecture:
+*   **Public VPS Nodes**: Acts as Bootnodes and API Gateways (Always Online).
+*   **Home/Private Nodes**: Connect via NAT Traversal and participate in validation.
 
 ```mermaid
 graph LR
-    A[Python Light Wallet] <-->|REST API| B(API Gateway :8080);
-    B <-->|Internal| C[Go Core Node];
-    C <-->|libp2p| D[P2P Network / Other Nodes];
-    C -->|Persist| E[BadgerDB /data];
+    A[Telegram Bot/Apps] <-->|HTTPS| B(Public VPS Node);
+    B <-->|P2P/Internet| C[Other VPS Nodes];
+    C <-->|NAT Traversal| D[Home Node (Private)];
+    B -->|Persist| E[BadgerDB];
 ```
 
 ## 🚀 Quick Start
 
-Get your node running in seconds.
+### Local Development
+Get your node running locally in seconds.
 
-### 1. Build
-```bash
-go build -o sole-cli .
-```
+1.  **Build**: `go build -o sole-cli .`
+2.  **Initialize**: `./sole-cli init`
+3.  **Run**: `./sole-cli startnode`
 
-### 2. Initialize
-Creates the blockchain genesis state in `./data/blocks`.
-```bash
-./sole-cli init
-```
+### 🌍 **Going Online (Public Network)**
+To deploy a public node on a VPS (DigitalOcean, AWS, Hetzner) accessible via the Internet:
 
-### 3. Run
-Starts the P2P node and API Gateway.
-```bash
-# Start Node (P2P: 3000, API: 8080)
-./sole-cli startnode --port 3000 --api-port 8080
-```
+👉 **[Read the Bare Metal Deployment Guide](docs/DEPLOYMENT.md)**
 
 ---
 
 ## 🌟 Key Features
 
-*   **Consensus Core**: **Proof of Authority (PoA)** engine using ECDSA signatures. No energy-intensive mining; only authorized validators can forge blocks.
-*   **Storage**: **BadgerDB v3** persistent storage (`/data`). Configured with `Truncate: true` for crash recovery and memory optimization.
-*   **Networking**: Optimized **P2P Discovery** via `libp2p` (mDNS/DHT). Includes "Self-Dialing" filtering and robust handshake deduplication.
-*   **Reliability**: **Graceful Shutdown** capability. Handles `SIGINT` (CTRL+C) to safely close connections and release DB locks.
-*   **Ecosystem**: Integrated **REST API** (`/tx/send`, `/balance`) enabling external integrations (e.g., Python/Web UIs).
+*   **Consensus Core**: **Proof of Authority (PoA)** engine using ECDSA. Energy-efficient validation.
+*   **Public P2P Network**: Full Internet support with **DNS Discovery** and **NAT Traversal**.
+*   **Secure API**: Built-in support for **HTTPS/TLS** (via Reverse Proxy) and Rate Limiting.
+*   **Reliability**: **Graceful Shutdown**, BadgerDB v3 persistence, and Systemd integration.
+*   **Ecosystem**: Full support for custodial apps like the **Telegram Bot**.
 
 ---
 
 ## 📚 Documentation
 
+*   **[Deployment Guide](docs/DEPLOYMENT.md)**: Zero-to-Hero VPS Setup (Systemd + Nginx).
+*   **[Ecosystem & Clients](docs/ECOSYSTEM.md)**: Wallet Manager & Integrations.
 *   **[API Reference](docs/api_reference.md)**: Endpoints for developers.
-*   **[CLI Manual](docs/cli_manual.md)**: Command flags and utility tools.
+*   **[CLI Manual](docs/cli_manual.md)**: Command flags usage.
 
 ---
 
