@@ -188,6 +188,7 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		s := big.Int{}
 		// Signature is always 64 bytes (32 for R, 32 for S)
 		if len(vin.Signature) != 64 {
+			fmt.Printf("⛔ TX Verify Failed: SigLen %d != 64\n", len(vin.Signature))
 			return false
 		}
 
@@ -198,6 +199,7 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		y := big.Int{}
 		keyLen := len(vin.PubKey)
 		if keyLen != 64 {
+			fmt.Printf("⛔ TX Verify Failed: KeyLen %d != 64\n", keyLen)
 			return false
 		}
 
@@ -206,6 +208,7 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 
 		rawPubKey := ecdsa.PublicKey{Curve: curve, X: &x, Y: &y}
 		if !ecdsa.Verify(&rawPubKey, txCopy.ID, &r, &s) {
+			fmt.Printf("⛔ TX Verify Failed: ECDSA Verify false. TxID: %x\n", txCopy.ID)
 			return false
 		}
 	}

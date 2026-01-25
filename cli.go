@@ -30,6 +30,7 @@ var (
 	portFlag    int
 	minerFlag   string
 	apiPortFlag int
+	dryRunFlag  bool
 )
 
 func Execute() {
@@ -95,6 +96,7 @@ func init() {
 	sendCmd.Flags().StringVar(&fromFlag, "from", "", "Source address")
 	sendCmd.Flags().StringVar(&toFlag, "to", "", "Destination address")
 	sendCmd.Flags().IntVar(&amountFlag, "amount", 0, "Amount to send")
+	sendCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Print transaction hex without sending")
 	sendCmd.MarkFlagRequired("from")
 	sendCmd.MarkFlagRequired("to")
 	sendCmd.MarkFlagRequired("amount")
@@ -253,6 +255,11 @@ func send(cmd *cobra.Command, args []string) {
 	defer chain.Database.Close()
 
 	tx := NewUTXOTransaction(fromFlag, toFlag, int64(amountFlag), chain)
+
+	if dryRunFlag {
+		fmt.Printf("%x", tx.Serialize())
+		return
+	}
 
 	// P2P Injection Logic
 	fmt.Println("Ricerca nodi per inviare la transazione...")

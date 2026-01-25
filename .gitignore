@@ -27,3 +27,4 @@ tmp/
 
 # Ignora file di test
 *.sh
+*.txt
