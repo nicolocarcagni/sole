@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -40,14 +39,27 @@ type Server struct {
 }
 
 type discoveryNotifee struct {
-	h host.Host
+	h      host.Host
+	server *Server
 }
 
 func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	fmt.Printf("Peer discovered: %s\n", pi.ID.String())
+	// fmt.Printf("Peer discovered: %s\n", ShortID(pi.ID.String()))
 	if err := n.h.Connect(context.Background(), pi); err != nil {
-		fmt.Printf("Error connecting to peer %s: %s\n", pi.ID.String(), err)
+		fmt.Printf("Error connecting to peer %s: %s\n", ShortID(pi.ID.String()), err)
+	} else {
+		// Trigger Handshake immediately upon connection
+		// fmt.Printf("🔌 Connected to %s, sending Version...\n", ShortID(pi.ID.String()))
+		n.server.SendVersion(pi.ID)
 	}
+}
+
+// ShortID returns the first 6 characters of a PeerID
+func ShortID(id string) string {
+	if len(id) > 6 {
+		return id[:6] + "..."
+	}
+	return id
 }
 
 // NewServer initializes the P2P server
@@ -80,30 +92,20 @@ func NewServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateKey
 	h.SetStreamHandler(protocolID, server.HandleStream)
 
 	// Setup mDNS Discovery
-	notifee := &discoveryNotifee{h: h}
+	notifee := &discoveryNotifee{h: h, server: server}
 	ser := mdns.NewMdnsService(h, discoveryNamespace, notifee)
 	if err := ser.Start(); err != nil {
 		log.Panic(err)
 	}
 
-	fmt.Printf("Server listening on %s with peer ID %s\n", h.Addrs()[0], h.ID().String())
+	fmt.Printf("Server listening on %s with peer ID %s\n", h.Addrs()[0], ShortID(h.ID().String()))
 	return server
 }
 
 // Start runs the P2P server loop (blocking)
 func (s *Server) Start() {
 	fmt.Println("Waiting for connections...")
-
-	go func() {
-		for {
-			time.Sleep(10 * time.Second)
-			peers := s.Host.Network().Peers()
-			for _, p := range peers {
-				s.SendVersion(p)
-			}
-		}
-	}()
-
+	// Loop removed to avoid spam. Handshake is now event-driven in HandlePeerFound.
 	select {} // block forever
 }
 
@@ -127,7 +129,7 @@ func (s *Server) ReadData(rw *bufio.ReadWriter, peerID peer.ID) {
 	command := BytesToCommand(payload[:commandLength])
 	content := payload[commandLength:]
 
-	fmt.Printf("Received %s command from %s\n", command, peerID.String())
+	// fmt.Printf("Received %s command from %s\n", command, peerID.String())
 
 	switch command {
 	case "version":
@@ -183,6 +185,15 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 	dec := gob.NewDecoder(bytes.NewReader(request))
 	dec.Decode(&payload)
 
+	// Duplicate Handshake Check
+	if _, ok := s.KnownPeers[peerID.String()]; ok {
+		// fmt.Printf("DEBUG: Ignored redundant Version from %s\n", ShortID(peerID.String()))
+		return
+	}
+
+	fmt.Printf("🤝 [P2P] Handshake (Version) | BestHeight: %d | Peer: %s\n", payload.BestHeight, ShortID(peerID.String()))
+	s.KnownPeers[peerID.String()] = payload.AddrFrom
+
 	myBestHeight := s.Blockchain.GetBestHeight()
 	foreignerBestHeight := payload.BestHeight
 
@@ -225,8 +236,10 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	dec.Decode(&payload)
 
 	if payload.Type == "block" {
+		fmt.Printf("📦 [P2P] Richiesta Dati (Block) | Hash: %x | Peer: %s\n", payload.ID[:4], ShortID(peerID.String()))
 		block, err := s.Blockchain.GetBlock(payload.ID)
 		if err != nil {
+			fmt.Printf("⚠️  Oggetto (Block) non trovato per Hash: %x\n", payload.ID)
 			return
 		}
 		s.SendBlock(peerID, &block)
@@ -234,7 +247,12 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 
 	if payload.Type == "tx" {
 		txID := hex.EncodeToString(payload.ID)
-		tx := s.Mempool[txID]
+		fmt.Printf("📦 [P2P] Richiesta Dati (Tx) | Hash: %s... | Peer: %s\n", txID[:8], ShortID(peerID.String()))
+		tx, ok := s.Mempool[txID]
+		if !ok {
+			fmt.Printf("⚠️  Oggetto (Tx) non trovato in Mempool: %s\n", txID)
+			return
+		}
 		s.SendTx(peerID, &tx)
 	}
 }
