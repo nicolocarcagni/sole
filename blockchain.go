@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	dbPath = "./tmp/blocks"
+	dbPath = "./data/blocks"
 )
 
 func getBadgerOptions(path string) badger.Options {
@@ -61,6 +61,11 @@ func InitBlockchain() (*Blockchain, error) {
 
 	if DBExists() {
 		return nil, fmt.Errorf("blockchain already exists")
+	}
+
+	// Ensure data directory exists
+	if err := os.MkdirAll(dbPath, os.ModePerm); err != nil {
+		return nil, fmt.Errorf("failed to create db directory: %s", err)
 	}
 
 	opts := getBadgerOptions(dbPath)

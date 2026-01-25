@@ -15,6 +15,7 @@ wallet_*.dat
 # Ignora le cartelle del database locale
 db/
 db_*
+data/
 tmp/
 
 # Ignora file di sistema/IDE
