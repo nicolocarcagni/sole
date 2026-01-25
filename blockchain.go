@@ -318,6 +318,13 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 
 // AddBlock adds a received block to the blockchain after PoA validation
 func (chain *Blockchain) AddBlock(block *Block) bool {
+	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
+	_, err := chain.GetBlock(block.Hash)
+	if err == nil {
+		// fmt.Printf("📦 [Blockchain] Block %x already exists. Skipping.\n", block.Hash[:4])
+		return true // Already processed
+	}
+
 	// Verify PoA signature first
 	if !VerifyBlockSignature(block) {
 		fmt.Println("AddBlock: Block rejected - invalid PoA signature")
@@ -327,7 +334,7 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
-	err := chain.Database.Update(func(txn *badger.Txn) error {
+	err = chain.Database.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get(block.Hash); err == nil {
 			return nil
 		}
