@@ -17,7 +17,7 @@ type RestServer struct {
 }
 
 // StartRestServer starts the API server on the specified port
-func StartRestServer(server *Server, port int) {
+func StartRestServer(server *Server, listenHost string, port int) {
 	rs := RestServer{P2P: server}
 
 	router := mux.NewRouter()
@@ -40,8 +40,8 @@ func StartRestServer(server *Server, port int) {
 	// Stricter limit for Sending Transactions
 	router.Handle("/tx/send", writeMW(http.HandlerFunc(rs.sendTx))).Methods("POST")
 
-	addr := fmt.Sprintf(":%d", port)
-	fmt.Printf("🚀 API Server started on http://localhost%s\n", addr)
+	addr := fmt.Sprintf("%s:%d", listenHost, port)
+	fmt.Printf("🚀 API Server started on http://%s\n", addr)
 
 	srv := &http.Server{
 		Handler:      router,

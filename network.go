@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"sync"
@@ -20,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/multiformats/go-multiaddr"
 )
 
 const (
@@ -93,20 +95,51 @@ func contains(s, substr string) bool {
 
 // ShortID returns the first 6 characters of a PeerID
 func ShortID(id string) string {
-	if len(id) > 6 {
-		return id[:6] + "..."
+	if len(id) > 12 {
+		return id[:6] + "..." + id[len(id)-6:]
 	}
 	return id
 }
 
+// ServerConfig holds P2P configuration
+type ServerConfig struct {
+	ListenHost string
+	Port       int
+	PublicIP   string
+	Bootnodes  []string
+	MinerAddr  string
+	PrivKey    *ecdsa.PrivateKey
+}
+
 // NewServer initializes the P2P server
-func NewServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateKey) *Server {
+func NewServer(cfg ServerConfig) *Server {
 	// Create LibP2P Host
 	priv, _, _ := crypto.GenerateKeyPair(crypto.Secp256k1, 256)
 
+	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.ListenHost, cfg.Port)
 	opts := []libp2p.Option{
-		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port)),
+		libp2p.ListenAddrStrings(listenAddr),
 		libp2p.Identity(priv),
+		// Enable NAT traversal
+		// libp2p.NATPortMap(), // Optional but good practice
+	}
+
+	// Handle Public IP Announcement (NAT Traversal)
+	if cfg.PublicIP != "" {
+		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", cfg.PublicIP, cfg.Port))
+		if err != nil {
+			log.Panicf("Invalid Public IP Multiaddr: %s", err)
+		}
+
+		// Factory to force announcing ONLY the external address (or append it)
+		// We usually want to announce the public capability.
+		addrFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			// In strict scenarios, return only externalAddr
+			return []multiaddr.Multiaddr{externalAddr}
+		}
+		opts = append(opts, libp2p.AddrsFactory(addrFactory))
+		// Force public reachability flag
+		opts = append(opts, libp2p.ForceReachabilityPublic())
 	}
 
 	h, err := libp2p.New(opts...)
@@ -119,8 +152,8 @@ func NewServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateKey
 	server := &Server{
 		Host:             h,
 		Blockchain:       chain,
-		MinerAddr:        minerAddress,
-		ValidatorPrivKey: validatorPrivKey,
+		MinerAddr:        cfg.MinerAddr,
+		ValidatorPrivKey: cfg.PrivKey,
 		KnownPeers:       make(map[string]string),
 		Mempool:          make(map[string]Transaction),
 	}
@@ -128,15 +161,93 @@ func NewServer(port int, minerAddress string, validatorPrivKey *ecdsa.PrivateKey
 	// Set Stream Handler
 	h.SetStreamHandler(protocolID, server.HandleStream)
 
-	// Setup mDNS Discovery
+	// Setup mDNS Discovery (Still useful for LAN)
 	notifee := &discoveryNotifee{h: h, server: server}
 	ser := mdns.NewMdnsService(h, discoveryNamespace, notifee)
 	if err := ser.Start(); err != nil {
 		log.Panic(err)
 	}
 
-	fmt.Printf("Server listening on %s with peer ID %s\n", h.Addrs()[0], ShortID(h.ID().String()))
+	// Bootstrap (Internet Discovery)
+	if len(cfg.Bootnodes) > 0 {
+		go server.Bootstrap(cfg.Bootnodes)
+	}
+
+	// --- PRETTY STARTUP SUMMARY ---
+	fmt.Println("\n┌───────────────────────────────────────────────────────────────┐")
+	fmt.Printf("│ ☀️  SOLE NODE STARTED (Port: %d)          \t\t\t│\n", cfg.Port)
+	fmt.Println("├───────────────────────────────────────────────────────────────┤")
+	fmt.Printf("│ 🆔 Peer ID: %s\n", h.ID().String())
+	fmt.Println("│                                                               │")
+	fmt.Println("│ 🔗 Listen Addresses (Copy one to other peers):                │")
+
+	hasPublic := false
+	for _, addr := range h.Addrs() {
+		// Construct full multiaddr: /ip4/x.x.x.x/tcp/3000/p2p/Qm...
+		fullAddr := fmt.Sprintf("%s/p2p/%s", addr, h.ID().String())
+
+		// Visual emphasis for public/LAN IPs
+		if strings.Contains(fullAddr, "/127.0.0.1/") {
+			fmt.Printf("│    (Local)    %s\n", fullAddr)
+		} else {
+			fmt.Printf("│  👉(Public)   %s\n", fullAddr)
+			hasPublic = true
+		}
+	}
+
+	if cfg.PublicIP != "" && !hasPublic {
+		// If PublicIP is set but not in Addrs (e.g. behind NAT and not yet recognized by libp2p), force display
+		// Note: libp2p.AddrsFactory should have added it, but just in case.
+		// Actually, depending on config, it might show up in h.Addrs() or not immediately.
+		// Let's construct it manually if we asked for it.
+		// But usually h.Addrs() is correct.
+
+		// If we are forcing public IP we might want to explicitly show the constructed one if missing
+		// For now we trust h.Addrs() as we injected the factory.
+	}
+
+	fmt.Println("└───────────────────────────────────────────────────────────────┘")
+
 	return server
+}
+
+// Bootstrap attempts to connect to seed nodes
+func (s *Server) Bootstrap(bootnodes []string) {
+	fmt.Printf("🔄 Bootstrapping: Connecting to %d seed nodes...\n", len(bootnodes))
+
+	validNodes := 0
+	for _, addr := range bootnodes {
+		ma, err := multiaddr.NewMultiaddr(addr)
+		if err != nil {
+			fmt.Printf("⚠️  Invalid bootnode address %s: %s\n", addr, err)
+			continue
+		}
+
+		pi, err := peer.AddrInfoFromP2pAddr(ma)
+		if err != nil {
+			fmt.Printf("⚠️  Invalid bootnode info %s: %s\n", addr, err)
+			continue
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		err = s.Host.Connect(ctx, *pi)
+		cancel()
+
+		if err != nil {
+			fmt.Printf("⚠️  Failed to connect to bootnode %s: %s\n", ShortID(pi.ID.String()), err)
+		} else {
+			fmt.Printf("✅ Connected to bootnode: %s\n", ShortID(pi.ID.String()))
+			validNodes++
+			// Trigger sync immediately
+			s.SendVersion(pi.ID)
+		}
+	}
+
+	if validNodes > 0 {
+		fmt.Println("🚀 Bootstrap completed successfully.")
+	} else {
+		fmt.Println("⚠️  Bootstrap failed: No bootnodes reachable.")
+	}
 }
 
 // Start runs the P2P server loop (blocking)
@@ -228,7 +339,7 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 		return
 	}
 
-	fmt.Printf("🤝 [P2P] Handshake (Version) | BestHeight: %d | Peer: %s\n", payload.BestHeight, ShortID(peerID.String()))
+	fmt.Printf("🤝 [Handshake] Connected to: %s (Remote) | Version: %d | BestHeight: %d\n", ShortID(peerID.String()), payload.Version, payload.BestHeight)
 	s.KnownPeers[peerID.String()] = payload.AddrFrom
 
 	myBestHeight := s.Blockchain.GetBestHeight()

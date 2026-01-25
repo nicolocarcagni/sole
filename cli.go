@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -25,17 +26,27 @@ var rootCmd = &cobra.Command{
 
 // Flags variables
 var (
-	addressFlag string
-	fromFlag    string
-	toFlag      string
-	amountFlag  float64
-	portFlag    int
-	minerFlag   string
-	apiPortFlag int
-	dryRunFlag  bool
+	addressFlag   string
+	fromFlag      string
+	toFlag        string
+	amountFlag    float64
+	portFlag      int
+	minerFlag     string
+	apiPortFlag   int
+	dryRunFlag    bool
+	listenFlag    string // Bind Address (0.0.0.0)
+	publicIPFlag  string // Announce Address
+	bootnodesFlag string // Comma-separated bootnodes
+	apiListenFlag string // API Bind Address (0.0.0.0)
 )
 
 func Execute() {
+	// Default to Help if no args provided
+	if len(os.Args) < 2 {
+		rootCmd.Help()
+		os.Exit(0)
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -118,9 +129,13 @@ func init() {
 		Short: "Start the P2P node",
 		Run:   startNode,
 	}
-	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "Port to listen on")
+	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "Porta P2P")
+	startNodeCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Indirizzo IP locale di ascolto P2P")
+	startNodeCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Indirizzo IP Pubblico (Annuncio)")
+	startNodeCmd.Flags().StringVar(&bootnodesFlag, "bootnodes", "", "Lista di Bootnodes separati da virgola")
 	startNodeCmd.Flags().StringVar(&minerFlag, "miner", "", "Miner address")
 	startNodeCmd.Flags().IntVar(&apiPortFlag, "api-port", 8080, "API Server Port")
+	startNodeCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Indirizzo IP locale di ascolto API")
 	rootCmd.AddCommand(startNodeCmd)
 }
 
@@ -171,14 +186,29 @@ func startNode(cmd *cobra.Command, args []string) {
 		fmt.Println("✅ Validatore Autorizzato riconosciuto. Avvio motore di consenso...")
 	}
 
+	// Parse bootnodes
+	var bootnodes []string
+	if bootnodesFlag != "" {
+		bootnodes = strings.Split(bootnodesFlag, ",")
+	}
+
+	// Config
+	cfg := ServerConfig{
+		ListenHost: listenFlag,
+		Port:       portFlag,
+		PublicIP:   publicIPFlag,
+		Bootnodes:  bootnodes,
+		MinerAddr:  minerFlag,
+		PrivKey:    validatorPrivKey,
+	}
+
 	// Initialize P2P Server
-	// Initialize P2P Server
-	server := NewServer(portFlag, minerFlag, validatorPrivKey)
+	server := NewServer(cfg)
 	// We handle DB closing manually on signal
 	// defer server.Blockchain.Database.Close()
 
 	// Start API Server
-	go StartRestServer(server, apiPortFlag)
+	go StartRestServer(server, apiListenFlag, apiPortFlag)
 
 	// Start P2P Loop (in background)
 	go server.Start()
