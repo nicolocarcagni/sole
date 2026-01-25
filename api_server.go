@@ -168,6 +168,9 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 			rs.P2P.SendInv(p, "tx", [][]byte{tx.ID})
 		}
 
+		// Attempt to mine if we are a validator
+		rs.P2P.AttemptMine()
+
 		json.NewEncoder(w).Encode(SuccessResponse{Status: "success", TxID: txID})
 	} else {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction already in mempool or exists"})

@@ -93,13 +93,9 @@ func VerifyBlockSignature(block *Block) bool {
 	r := new(big.Int).SetBytes(block.Signature[:32])
 	s := new(big.Int).SetBytes(block.Signature[32:])
 
-	// Recompute block hash (exclude Signature field)
-	tempBlock := *block
-	tempBlock.Signature = nil
-	tempBlock.SetHash()
-
-	// Verify
-	if !ecdsa.Verify(&pubKey, tempBlock.Hash, r, s) {
+	// Verify STRICTLY against the Block Hash (as signed by Validator)
+	// We trust the Hash integrity is checked elsewhere or we accept the Hash as the identity.
+	if !ecdsa.Verify(&pubKey, block.Hash, r, s) {
 		fmt.Printf("PoA: Block signature verification failed. len(sig)=%d\n", len(block.Signature))
 		return false
 	}

@@ -333,6 +333,11 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 
 	// Mine if Miner (and has valid privKey)
+	s.AttemptMine()
+}
+
+// AttemptMine tries to mine a block if conditions are met
+func (s *Server) AttemptMine() {
 	if s.MinerAddr != "" && s.ValidatorPrivKey != nil && len(s.Mempool) >= 1 {
 		fmt.Println("Forging nuovo blocco con transazioni della mempool...")
 		var txs []*Transaction
