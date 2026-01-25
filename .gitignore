@@ -7,8 +7,7 @@ sole-cli.exe
 *.dylib
 
 # Ignora i file chiave/wallet
-wallet.dat
-wallet_*.dat
+*.dat
 *.key
 *.pem
 
