@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"os"
 )
 
 // TxOutput represents a transaction output
@@ -264,7 +265,9 @@ func NewUTXOTransaction(from, to string, amount int64, utxoSet *Blockchain) *Tra
 	acc, validOutputs := utxoSet.FindSpendableOutputs(pubKeyHash, amount)
 
 	if acc < amount {
-		log.Panic("ERROR: Not enough funds")
+		fmt.Printf("⛔ ERRORE: Fondi insufficienti. Disponibili: %d, Richiesti: %d\n", acc, amount)
+		os.Exit(1)
+		// return nil // unreachable
 	}
 
 	for txid, outs := range validOutputs {

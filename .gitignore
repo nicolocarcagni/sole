@@ -21,3 +21,9 @@ tmp/
 .DS_Store
 .idea/
 .vscode/
+
+# Ignora file di log
+*.log
+
+# Ignora file di test
+*.sh

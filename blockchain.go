@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime"
 	"sync"
 
 	"github.com/dgraph-io/badger/v3"
@@ -17,6 +18,29 @@ import (
 const (
 	dbPath = "./tmp/blocks"
 )
+
+func getBadgerOptions(path string) badger.Options {
+	opts := badger.DefaultOptions(path)
+	opts.Logger = nil
+	// opts.Truncate = true (Removed in v3)
+
+	opts.ValueLogFileSize = 16 << 20 // 16 MB max value log file size
+	opts.MemTableSize = 8 << 20      // 8 MB memtable
+	opts.BlockCacheSize = 1 << 20    // 1 MB cache
+	opts.NumVersionsToKeep = 1
+
+	// Robustness
+	opts.VerifyValueChecksum = true
+	opts.DetectConflicts = true
+
+	// Note: Badger v3 removed explicit FileIO/Mmap flags in Options struct.
+	// It manages memory mapping internally. On Windows, ensure OS handles mmap correctly.
+	if runtime.GOOS == "windows" {
+		fmt.Println("🔧 Windows detected: Running with standard Badger v3 defaults.")
+	}
+
+	return opts
+}
 
 // Blockchain keeps a sequence of Blocks
 type Blockchain struct {
@@ -39,12 +63,7 @@ func InitBlockchain() (*Blockchain, error) {
 		return nil, fmt.Errorf("blockchain already exists")
 	}
 
-	opts := badger.DefaultOptions(dbPath)
-	opts.Logger = nil
-	opts.ValueLogFileSize = 16 << 20 // 16 MB max value log file size (down from default 1GB)
-	opts.MemTableSize = 8 << 20      // 8 MB memtable (down from default 64MB)
-	opts.BlockCacheSize = 1 << 20    // 1 MB cache (cannot be 0 if compression enabled)
-	opts.NumVersionsToKeep = 1
+	opts := getBadgerOptions(dbPath)
 
 	db, err := badger.Open(opts)
 	if err != nil {
