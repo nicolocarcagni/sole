@@ -458,13 +458,3 @@ func GobEncode(data interface{}) []byte {
 	}
 	return buff.Bytes()
 }
-
-func DeserializeTransaction(data []byte) Transaction {
-	var tx Transaction
-	decoder := gob.NewDecoder(bytes.NewReader(data))
-	err := decoder.Decode(&tx)
-	if err != nil {
-		log.Panic(err)
-	}
-	return tx
-}

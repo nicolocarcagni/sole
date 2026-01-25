@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -64,17 +63,99 @@ type Transaction struct {
 	Vout []TxOutput
 }
 
-// Serialize returns a serialized Transaction
+// Serialize returns a serialized Transaction (Manual Binary Encoding for Interop)
+// Format:
+// [InputsCount: 8 bytes]
+//
+//	[TxID Len: 8 bytes] [TxID: Bytes]
+//	[Vout: 8 bytes]
+//	[Sig Len: 8 bytes] [Sig: Bytes]
+//	[PubKey Len: 8 bytes] [PubKey: Bytes]
+//
+// [OutputsCount: 8 bytes]
+//
+//	[Value: 8 bytes]
+//	[PubKeyHash Len: 8 bytes] [PubKeyHash: Bytes]
 func (tx Transaction) Serialize() []byte {
 	var encoded bytes.Buffer
 
-	enc := gob.NewEncoder(&encoded)
-	err := enc.Encode(tx)
-	if err != nil {
-		log.Panic(err)
+	// Inputs
+	binary.Write(&encoded, binary.BigEndian, int64(len(tx.Vin)))
+	for _, vin := range tx.Vin {
+		binary.Write(&encoded, binary.BigEndian, int64(len(vin.Txid)))
+		encoded.Write(vin.Txid)
+		binary.Write(&encoded, binary.BigEndian, int64(vin.Vout))
+		binary.Write(&encoded, binary.BigEndian, int64(len(vin.Signature)))
+		encoded.Write(vin.Signature)
+		binary.Write(&encoded, binary.BigEndian, int64(len(vin.PubKey)))
+		encoded.Write(vin.PubKey)
+	}
+
+	// Outputs
+	binary.Write(&encoded, binary.BigEndian, int64(len(tx.Vout)))
+	for _, vout := range tx.Vout {
+		binary.Write(&encoded, binary.BigEndian, vout.Value)
+		binary.Write(&encoded, binary.BigEndian, int64(len(vout.PubKeyHash)))
+		encoded.Write(vout.PubKeyHash)
 	}
 
 	return encoded.Bytes()
+}
+
+// DeserializeTransaction decodes a transaction from bytes
+func DeserializeTransaction(data []byte) Transaction {
+	var tx Transaction
+	reader := bytes.NewReader(data)
+
+	// Inputs
+	var inputsCount int64
+	binary.Read(reader, binary.BigEndian, &inputsCount)
+	for i := 0; i < int(inputsCount); i++ {
+		var vin TxInput
+		var lenVal int64
+
+		// TxID
+		binary.Read(reader, binary.BigEndian, &lenVal)
+		vin.Txid = make([]byte, lenVal)
+		reader.Read(vin.Txid)
+
+		// Vout
+		var vout int64
+		binary.Read(reader, binary.BigEndian, &vout)
+		vin.Vout = int(vout)
+
+		// Signature
+		binary.Read(reader, binary.BigEndian, &lenVal)
+		vin.Signature = make([]byte, lenVal)
+		reader.Read(vin.Signature)
+
+		// PubKey
+		binary.Read(reader, binary.BigEndian, &lenVal)
+		vin.PubKey = make([]byte, lenVal)
+		reader.Read(vin.PubKey)
+
+		tx.Vin = append(tx.Vin, vin)
+	}
+
+	// Outputs
+	var outputsCount int64
+	binary.Read(reader, binary.BigEndian, &outputsCount)
+	for i := 0; i < int(outputsCount); i++ {
+		var vout TxOutput
+		var lenVal int64
+
+		binary.Read(reader, binary.BigEndian, &vout.Value)
+
+		binary.Read(reader, binary.BigEndian, &lenVal)
+		vout.PubKeyHash = make([]byte, lenVal)
+		reader.Read(vout.PubKeyHash)
+
+		tx.Vout = append(tx.Vout, vout)
+	}
+
+	// Recalculate Hash (ID)
+	tx.ID = tx.Hash()
+	return tx
 }
 
 // Hash returns the hash of the Transaction

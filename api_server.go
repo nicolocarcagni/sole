@@ -25,6 +25,7 @@ func StartRestServer(server *Server, port int) {
 
 	// Endpoints
 	router.HandleFunc("/balance/{address}", rs.getBalance).Methods("GET")
+	router.HandleFunc("/utxos/{address}", rs.getUTXOs).Methods("GET")
 	router.HandleFunc("/blocks/tip", rs.getTip).Methods("GET")
 	router.HandleFunc("/blocks/{hash}", rs.getBlock).Methods("GET")
 	router.HandleFunc("/tx/send", rs.sendTx).Methods("POST")
@@ -102,6 +103,43 @@ func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(BalanceResponse{Address: addr, Balance: balance})
+}
+
+// UTXOResponse represents a spendable output
+type UTXOResponse struct {
+	TxID   string `json:"txid"`
+	Vout   int    `json:"vout"`
+	Amount int64  `json:"amount"`
+}
+
+func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	addr := vars["address"]
+
+	if !ValidateAddress(addr) {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address"})
+		return
+	}
+
+	pubKeyHash, _ := Base58Decode([]byte(addr))
+	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
+
+	utxos := rs.P2P.Blockchain.FindUnspentTransactions(pubKeyHash)
+	var response []UTXOResponse
+
+	for _, tx := range utxos {
+		for outIdx, out := range tx.Vout {
+			if out.IsLockedWithKey(pubKeyHash) {
+				response = append(response, UTXOResponse{
+					TxID:   hex.EncodeToString(tx.ID),
+					Vout:   outIdx,
+					Amount: out.Value,
+				})
+			}
+		}
+	}
+
+	json.NewEncoder(w).Encode(response)
 }
 
 func (rs *RestServer) getTip(w http.ResponseWriter, r *http.Request) {
