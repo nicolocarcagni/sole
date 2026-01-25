@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"time"
+
+	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/crypto"
@@ -36,6 +39,7 @@ type Server struct {
 	ValidatorPrivKey *ecdsa.PrivateKey
 	KnownPeers       map[string]string // PeerID string -> Addr
 	Mempool          map[string]Transaction
+	MempoolMux       sync.Mutex
 }
 
 type discoveryNotifee struct {
@@ -317,6 +321,9 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	txData := payload.Transaction
 	tx := DeserializeTransaction(txData)
 
+	s.MempoolMux.Lock()
+	defer s.MempoolMux.Unlock()
+
 	if s.Mempool[hex.EncodeToString(tx.ID)].ID == nil {
 		fmt.Printf("Nuova Transazione in Mempool: %x\n", tx.ID)
 		s.Mempool[hex.EncodeToString(tx.ID)] = tx
@@ -333,44 +340,66 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 
 	// Mine if Miner (and has valid privKey)
-	s.AttemptMine()
+	// s.AttemptMine() // Removed for Periodic Mining
+}
+
+// StartMiningLoop periodically checks mempool to mine new blocks
+func (s *Server) StartMiningLoop() {
+	if s.MinerAddr == "" {
+		return
+	}
+	fmt.Println("⛏️  Mining Loop avviato (Intervallo: 10s)")
+	ticker := time.NewTicker(10 * time.Second)
+
+	for range ticker.C {
+		s.AttemptMine()
+	}
 }
 
 // AttemptMine tries to mine a block if conditions are met
 func (s *Server) AttemptMine() {
-	if s.MinerAddr != "" && s.ValidatorPrivKey != nil && len(s.Mempool) >= 1 {
-		fmt.Println("Forging nuovo blocco con transazioni della mempool...")
-		var txs []*Transaction
-		for id := range s.Mempool {
-			tx := s.Mempool[id]
-			if s.Blockchain.VerifyTransaction(&tx) {
-				txs = append(txs, &tx)
-			}
+	if s.MinerAddr == "" || s.ValidatorPrivKey == nil {
+		return
+	}
+
+	s.MempoolMux.Lock()
+	defer s.MempoolMux.Unlock()
+
+	if len(s.Mempool) == 0 {
+		return
+	}
+
+	fmt.Println("Forging nuovo blocco con transazioni della mempool...")
+	var txs []*Transaction
+	for id := range s.Mempool {
+		tx := s.Mempool[id]
+		if s.Blockchain.VerifyTransaction(&tx) {
+			txs = append(txs, &tx)
 		}
+	}
 
-		if len(txs) == 0 {
-			fmt.Println("Tutte le transazioni in mempool sono invalide.")
-			return
-		}
+	if len(txs) == 0 {
+		fmt.Println("Tutte le transazioni in mempool sono invalide.")
+		// We should clear invalid txs to avoid infinite loops?
+		// For now simple return.
+		return
+	}
 
-		// Add Coinbase for Miner
-		cbTx := NewCoinbaseTX(s.MinerAddr, "", 20) // Miner Reward
-		txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
+	// Add Coinbase for Miner
+	cbTx := NewCoinbaseTX(s.MinerAddr, "", 20) // Miner Reward
+	txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
 
-		newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
+	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
 
-		// Clear Mempool
-		for _, tx := range txs {
-			delete(s.Mempool, hex.EncodeToString(tx.ID))
-		}
+	// Clear Mempool
+	s.Mempool = make(map[string]Transaction)
 
-		fmt.Printf("Nuovo blocco forgiato: %x\n", newBlock.Hash)
+	fmt.Printf("Nuovo blocco forgiato: %x\n", newBlock.Hash)
 
-		// Broadcast new block
-		peers := s.Host.Network().Peers()
-		for _, p := range peers {
-			s.SendInv(p, "block", [][]byte{newBlock.Hash})
-		}
+	// Broadcast new block
+	peers := s.Host.Network().Peers()
+	for _, p := range peers {
+		s.SendInv(p, "block", [][]byte{newBlock.Hash})
 	}
 }
 

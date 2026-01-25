@@ -183,6 +183,11 @@ func startNode(cmd *cobra.Command, args []string) {
 	// Start P2P Loop (in background)
 	go server.Start()
 
+	// Start Periodic Mining Loop (if miner)
+	if minerFlag != "" {
+		go server.StartMiningLoop()
+	}
+
 	// Graceful Shutdown Handling
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

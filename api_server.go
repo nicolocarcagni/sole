@@ -196,6 +196,9 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	txID := hex.EncodeToString(tx.ID)
 
 	// Add to Mempool
+	rs.P2P.MempoolMux.Lock()
+	defer rs.P2P.MempoolMux.Unlock()
+
 	if rs.P2P.Mempool[txID].ID == nil {
 		rs.P2P.Mempool[txID] = tx
 		fmt.Printf("API: Transazione aggiunta alla Mempool: %s\n", txID)
@@ -205,9 +208,6 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 		for _, p := range peers {
 			rs.P2P.SendInv(p, "tx", [][]byte{tx.ID})
 		}
-
-		// Attempt to mine if we are a validator
-		rs.P2P.AttemptMine()
 
 		json.NewEncoder(w).Encode(SuccessResponse{Status: "success", TxID: txID})
 	} else {
