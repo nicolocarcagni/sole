@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -170,14 +172,37 @@ func startNode(cmd *cobra.Command, args []string) {
 	}
 
 	// Initialize P2P Server
+	// Initialize P2P Server
 	server := NewServer(portFlag, minerFlag, validatorPrivKey)
-	defer server.Blockchain.Database.Close()
+	// We handle DB closing manually on signal
+	// defer server.Blockchain.Database.Close()
 
 	// Start API Server
 	go StartRestServer(server, apiPortFlag)
 
-	// Start P2P Loop (Blocking)
-	server.Start()
+	// Start P2P Loop (in background)
+	go server.Start()
+
+	// Graceful Shutdown Handling
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	<-stop // Block here until signal received
+
+	fmt.Println("\n⚠️  Ricevuto segnale di stop. Chiusura in corso...")
+
+	// 1. Close P2P Host (Network)
+	if err := server.Host.Close(); err != nil {
+		fmt.Printf("Errore chiusura Host P2P: %s\n", err)
+	}
+
+	// 2. Close Database (Persistence)
+	// Important: This releases the LOCK file
+	if err := server.Blockchain.Database.Close(); err != nil {
+		fmt.Printf("Errore chiusura Database: %s\n", err)
+	}
+
+	fmt.Println("✅ Nodo chiuso correttamente. A presto!")
 }
 
 func runInit(cmd *cobra.Command, args []string) {
