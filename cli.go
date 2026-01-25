@@ -192,6 +192,13 @@ func startNode(cmd *cobra.Command, args []string) {
 		bootnodes = strings.Split(bootnodesFlag, ",")
 	}
 
+	// Load Persistent P2P Identity
+	nodeKeyPath := "node_key.dat"
+	privKeyP2P, err := LoadOrGenerateNodeKey(nodeKeyPath)
+	if err != nil {
+		log.Panic("Errore caricamento chiave nodo:", err)
+	}
+
 	// Config
 	cfg := ServerConfig{
 		ListenHost: listenFlag,
@@ -200,6 +207,7 @@ func startNode(cmd *cobra.Command, args []string) {
 		Bootnodes:  bootnodes,
 		MinerAddr:  minerFlag,
 		PrivKey:    validatorPrivKey,
+		NodeKey:    privKeyP2P,
 	}
 
 	// Initialize P2P Server

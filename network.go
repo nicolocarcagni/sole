@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -109,12 +110,42 @@ type ServerConfig struct {
 	Bootnodes  []string
 	MinerAddr  string
 	PrivKey    *ecdsa.PrivateKey
+	NodeKey    crypto.PrivKey // Identity Key
+}
+
+// LoadOrGenerateNodeKey manages persistent P2P identity
+func LoadOrGenerateNodeKey(keyFile string) (crypto.PrivKey, error) {
+	// Check if file exists
+	if _, err := os.Stat(keyFile); err == nil {
+		// LOAD
+		data, err := os.ReadFile(keyFile)
+		if err != nil {
+			return nil, err
+		}
+		return crypto.UnmarshalPrivateKey(data)
+	}
+
+	// GENERATE
+	fmt.Println("🔑 Generating new P2P Identity Key...")
+	priv, _, err := crypto.GenerateKeyPair(crypto.Ed25519, -1)
+	if err != nil {
+		return nil, err
+	}
+
+	// SAVE
+	data, err := crypto.MarshalPrivateKey(priv)
+	if err != nil {
+		return nil, err
+	}
+	err = os.WriteFile(keyFile, data, 0600)
+	return priv, err
 }
 
 // NewServer initializes the P2P server
+// NewServer initializes the P2P server
 func NewServer(cfg ServerConfig) *Server {
-	// Create LibP2P Host
-	priv, _, _ := crypto.GenerateKeyPair(crypto.Secp256k1, 256)
+	// Use persistent identity
+	priv := cfg.NodeKey
 
 	listenAddr := fmt.Sprintf("/ip4/%s/tcp/%d", cfg.ListenHost, cfg.Port)
 	opts := []libp2p.Option{
