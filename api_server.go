@@ -88,6 +88,76 @@ type ErrorResponse struct {
 	Error string `json:"error"`
 }
 
+// JSON Response Structs
+type JSONTransactionResponse struct {
+	ID        string       `json:"id"`
+	Inputs    []JSONInput  `json:"inputs"`
+	Outputs   []JSONOutput `json:"outputs"`
+	Timestamp int64        `json:"timestamp"` // Placeholder (block time if available, or 0)
+}
+
+type JSONInput struct {
+	SenderAddress string `json:"sender"`
+	Signature     string `json:"signature"`
+}
+
+type JSONOutput struct {
+	ReceiverAddress string `json:"receiver"`
+	Value           int64  `json:"value"`
+}
+
+// Helper: Convert PubKey to Address
+func PubKeyToAddress(pubKey []byte) string {
+	pubKeyHash := HashPubKey(pubKey)
+	versionedPayload := append([]byte{version}, pubKeyHash...)
+	checksum := checksum(versionedPayload)
+	fullPayload := append(versionedPayload, checksum...)
+	return string(Base58Encode(fullPayload))
+}
+
+// Helper: Convert PubKeyHash to Address
+func PubKeyHashToAddress(pubKeyHash []byte) string {
+	versionedPayload := append([]byte{version}, pubKeyHash...)
+	checksum := checksum(versionedPayload)
+	fullPayload := append(versionedPayload, checksum...)
+	return string(Base58Encode(fullPayload))
+}
+
+// Mapper: ToJSONResponse
+func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
+	var inputs []JSONInput
+	var outputs []JSONOutput
+
+	// Inputs
+	if tx.IsCoinbase() {
+		inputs = append(inputs, JSONInput{
+			SenderAddress: "COINBASE",
+			Signature:     "",
+		})
+	} else {
+		for _, vin := range tx.Vin {
+			inputs = append(inputs, JSONInput{
+				SenderAddress: PubKeyToAddress(vin.PubKey),
+				Signature:     hex.EncodeToString(vin.Signature),
+			})
+		}
+	}
+
+	// Outputs
+	for _, vout := range tx.Vout {
+		outputs = append(outputs, JSONOutput{
+			ReceiverAddress: PubKeyHashToAddress(vout.PubKeyHash),
+			Value:           vout.Value,
+		})
+	}
+
+	return JSONTransactionResponse{
+		ID:      hex.EncodeToString(tx.ID),
+		Inputs:  inputs,
+		Outputs: outputs,
+	}
+}
+
 // Handlers
 
 func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
@@ -190,7 +260,13 @@ func (rs *RestServer) getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	txs := rs.P2P.Blockchain.FindTransactions(addr)
-	json.NewEncoder(w).Encode(txs)
+
+	var jsonTxs []JSONTransactionResponse
+	for _, tx := range txs {
+		jsonTxs = append(jsonTxs, ToJSONResponse(&tx))
+	}
+
+	json.NewEncoder(w).Encode(jsonTxs)
 }
 
 func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
