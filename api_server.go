@@ -36,6 +36,7 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	router.Handle("/utxos/{address}", readMW(http.HandlerFunc(rs.getUTXOs))).Methods("GET")
 	router.Handle("/blocks/tip", readMW(http.HandlerFunc(rs.getTip))).Methods("GET")
 	router.Handle("/blocks/{hash}", readMW(http.HandlerFunc(rs.getBlock))).Methods("GET")
+	router.Handle("/transactions/{address}", readMW(http.HandlerFunc(rs.getTransactions))).Methods("GET")
 
 	// Stricter limit for Sending Transactions
 	router.Handle("/tx/send", writeMW(http.HandlerFunc(rs.sendTx))).Methods("POST")
@@ -177,6 +178,19 @@ func (rs *RestServer) getBlock(w http.ResponseWriter, r *http.Request) {
 	// We might want a custom JSON representation for Block if fields are private or complex
 	// But Block fields are exported, so automatic JSON should work roughly ok
 	json.NewEncoder(w).Encode(block)
+}
+
+func (rs *RestServer) getTransactions(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	addr := vars["address"]
+
+	if !ValidateAddress(addr) {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address"})
+		return
+	}
+
+	txs := rs.P2P.Blockchain.FindTransactions(addr)
+	json.NewEncoder(w).Encode(txs)
 }
 
 func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {

@@ -422,6 +422,51 @@ func (chain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transactio
 	return unspentTXs
 }
 
+// FindTransactions searches for all transactions related to an address
+func (chain *Blockchain) FindTransactions(address string) []Transaction {
+	var txs []Transaction
+
+	pubKeyHash, err := Base58Decode([]byte(address))
+	if err != nil {
+		fmt.Printf("Error decoding address: %s\n", err)
+		return txs
+	}
+	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
+
+	iter := chain.Iterator()
+
+	for {
+		block := iter.Next()
+
+		for _, tx := range block.Transactions {
+			// Check Outputs (Receiver)
+			for _, out := range tx.Vout {
+				if out.IsLockedWithKey(pubKeyHash) {
+					txs = append(txs, *tx)
+					goto NextTx // Avoid adding same tx twice
+				}
+			}
+
+			// Check Inputs (Sender)
+			if !tx.IsCoinbase() {
+				for _, in := range tx.Vin {
+					if in.UsesKey(pubKeyHash) {
+						txs = append(txs, *tx)
+						goto NextTx
+					}
+				}
+			}
+
+		NextTx:
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+	return txs
+}
+
 // FindSpendableOutputs finds and returns unspent outputs to reference in inputs
 func (chain *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
