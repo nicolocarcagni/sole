@@ -152,9 +152,10 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 	}
 
 	return JSONTransactionResponse{
-		ID:      hex.EncodeToString(tx.ID),
-		Inputs:  inputs,
-		Outputs: outputs,
+		ID:        hex.EncodeToString(tx.ID),
+		Inputs:    inputs,
+		Outputs:   outputs,
+		Timestamp: tx.Timestamp,
 	}
 }
 

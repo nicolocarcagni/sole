@@ -24,7 +24,7 @@ func NewGenesisBlock() *Block {
 	// Create Coinbase Transaction manually
 	txin := TxInput{[]byte{}, -1, nil, []byte(GenesisCoinbaseData)}
 	txout := NewTxOutput(int64(GenesisReward*100000000), GenesisAdminAddress) // 5M * 10^8
-	coinbase := &Transaction{[]byte("SOLE_GENESIS_TX_ID"), []TxInput{txin}, []TxOutput{*txout}}
+	coinbase := &Transaction{[]byte("SOLE_GENESIS_TX_ID"), []TxInput{txin}, []TxOutput{*txout}, int64(GenesisTimestamp)}
 
 	// Hash is usually set by Hash(), but we want fixed ID
 	// Check if Hash() logic in transaction.go is compatible or if we force it.

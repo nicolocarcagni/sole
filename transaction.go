@@ -12,6 +12,7 @@ import (
 	"log"
 	"math/big"
 	"os"
+	"time"
 )
 
 // TxOutput represents a transaction output
@@ -58,24 +59,13 @@ func (in *TxInput) UsesKey(pubKeyHash []byte) bool {
 
 // Transaction represents a Bitcoin-like transaction
 type Transaction struct {
-	ID   []byte
-	Vin  []TxInput
-	Vout []TxOutput
+	ID        []byte
+	Vin       []TxInput
+	Vout      []TxOutput
+	Timestamp int64
 }
 
 // Serialize returns a serialized Transaction (Manual Binary Encoding for Interop)
-// Format:
-// [InputsCount: 8 bytes]
-//
-//	[TxID Len: 8 bytes] [TxID: Bytes]
-//	[Vout: 8 bytes]
-//	[Sig Len: 8 bytes] [Sig: Bytes]
-//	[PubKey Len: 8 bytes] [PubKey: Bytes]
-//
-// [OutputsCount: 8 bytes]
-//
-//	[Value: 8 bytes]
-//	[PubKeyHash Len: 8 bytes] [PubKeyHash: Bytes]
 func (tx Transaction) Serialize() []byte {
 	var encoded bytes.Buffer
 
@@ -98,6 +88,9 @@ func (tx Transaction) Serialize() []byte {
 		binary.Write(&encoded, binary.BigEndian, int64(len(vout.PubKeyHash)))
 		encoded.Write(vout.PubKeyHash)
 	}
+
+	// Timestamp
+	binary.Write(&encoded, binary.BigEndian, tx.Timestamp)
 
 	return encoded.Bytes()
 }
@@ -153,6 +146,11 @@ func DeserializeTransaction(data []byte) Transaction {
 		tx.Vout = append(tx.Vout, vout)
 	}
 
+	// Timestamp
+	if reader.Len() > 0 {
+		binary.Read(reader, binary.BigEndian, &tx.Timestamp)
+	}
+
 	// Recalculate Hash (ID)
 	tx.ID = tx.Hash()
 	return tx
@@ -179,23 +177,6 @@ func (tx Transaction) SerializeForHash() []byte {
 		encoded.Write(vin.Txid)
 		binary.Write(&encoded, binary.BigEndian, int64(vin.Vout))
 		encoded.Write(vin.PubKey)
-		// Signature is NOT included in TX ID hash usually (Witness SegWit separate)
-		// BUT for signing validation (TxCopy), we need to sign the content.
-		// Wait, the ID should identify the transaction structure.
-		// If we follow Bitcoin, TxID = Hash(Version + Vin + Vout + LockTime).
-		// The Vin contains Signature. So TxID changes after signing?
-		// In Bitcoin, TxID is calculated on signed TX.
-		// BUT when we sign, we sign a copy WITHOUT signature. ecdsa.Sign(..., txCopy.ID).
-		// So txCopy.ID is hash of txCopy (with empty sigs).
-		// So yes, we should include 'vin.Signature' in Hash calculation,
-		// because for the 'txCopy' used in signing, Signature is nil, so it adds nothing.
-		// For the final tx, ID includes signature?
-		// No, looking at Sign():
-		// txCopy.ID = txCopy.Hash() where txCopy has nil signature.
-		// So the signature is signing the hash of the transaction components minus signature.
-		// This is correct.
-		// And Verify() does the same: creates txCopy with nil signature, calculates Hash (ID), compares.
-		// So including vin.Signature here is fine, as long as it handles nil correctly (it does nothing or adds empty bytes).
 		encoded.Write(vin.Signature)
 	}
 
@@ -204,6 +185,9 @@ func (tx Transaction) SerializeForHash() []byte {
 		binary.Write(&encoded, binary.BigEndian, vout.Value)
 		encoded.Write(vout.PubKeyHash)
 	}
+
+	// Timestamp
+	binary.Write(&encoded, binary.BigEndian, tx.Timestamp)
 
 	return encoded.Bytes()
 }
@@ -267,29 +251,22 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 
 		r := big.Int{}
 		s := big.Int{}
-		// Signature is always 64 bytes (32 for R, 32 for S)
 		if len(vin.Signature) != 64 {
-			fmt.Printf("⛔ TX Verify Failed: SigLen %d != 64\n", len(vin.Signature))
 			return false
 		}
-
 		r.SetBytes(vin.Signature[:32])
 		s.SetBytes(vin.Signature[32:])
 
 		x := big.Int{}
 		y := big.Int{}
-		keyLen := len(vin.PubKey)
-		if keyLen != 64 {
-			fmt.Printf("⛔ TX Verify Failed: KeyLen %d != 64\n", keyLen)
+		if len(vin.PubKey) != 64 {
 			return false
 		}
-
 		x.SetBytes(vin.PubKey[:32])
 		y.SetBytes(vin.PubKey[32:])
 
 		rawPubKey := ecdsa.PublicKey{Curve: curve, X: &x, Y: &y}
 		if !ecdsa.Verify(&rawPubKey, txCopy.ID, &r, &s) {
-			fmt.Printf("⛔ TX Verify Failed: ECDSA Verify false. TxID: %x\n", txCopy.ID)
 			return false
 		}
 	}
@@ -310,7 +287,7 @@ func (tx *Transaction) TrimmedCopy() Transaction {
 		outputs = append(outputs, TxOutput{vout.Value, vout.PubKeyHash})
 	}
 
-	txCopy := Transaction{tx.ID, inputs, outputs}
+	txCopy := Transaction{tx.ID, inputs, outputs, tx.Timestamp}
 
 	return txCopy
 }
@@ -328,7 +305,7 @@ func NewCoinbaseTX(to, data string, amount int64) *Transaction {
 
 	txin := TxInput{[]byte{}, -1, nil, []byte(data)}
 	txout := NewTxOutput(amount, to)
-	tx := Transaction{nil, []TxInput{txin}, []TxOutput{*txout}}
+	tx := Transaction{nil, []TxInput{txin}, []TxOutput{*txout}, time.Now().Unix()}
 	tx.ID = tx.Hash()
 
 	return &tx
@@ -376,7 +353,7 @@ func NewUTXOTransaction(from, to string, amount int64, utxoSet *Blockchain) *Tra
 		outputs = append(outputs, *NewTxOutput(acc-amount, from))
 	}
 
-	tx := Transaction{nil, inputs, outputs}
+	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
 	tx.ID = tx.Hash()
 	utxoSet.SignTransaction(&tx, wallet.GetPrivateKey())
 
