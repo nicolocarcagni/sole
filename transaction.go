@@ -343,7 +343,11 @@ func NewUTXOTransaction(from, to string, amount int64, utxoSet *Blockchain) *Tra
 	if err != nil {
 		log.Panic(err)
 	}
-	wallet := wallets.GetWallet(from)
+	wallet := wallets.GetWalletRef(from)
+	if wallet == nil {
+		fmt.Printf("⛔ ERRORE: Wallet non trovato per l'indirizzo mittente %s. Assicurati di avere il file wallet.dat corretto.\n", from)
+		os.Exit(1)
+	}
 	pubKeyHash := HashPubKey(wallet.PublicKey)
 
 	acc, validOutputs := utxoSet.FindSpendableOutputs(pubKeyHash, amount)
