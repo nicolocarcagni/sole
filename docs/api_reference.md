@@ -58,6 +58,31 @@ curl -X POST http://localhost:8080/tx/send \
 
 ---
 
+### 3. Transaction History
+Retrieves all transactions (sent and received) associated with an address.
+
+**Request**
+`GET /transactions/{address}`
+
+**Response**
+Returns an array of Transaction objects.
+```json
+[
+  {
+    "ID": "Base64encodedBytes...",
+    "Vin": [...],
+    "Vout": [...]
+  }
+]
+```
+
+**Example**
+```bash
+curl -s http://localhost:8080/transactions/15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw
+```
+
+---
+
 ### 3. Chain Info
 Getting the current state of the blockchain tip.
 

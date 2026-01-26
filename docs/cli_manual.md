@@ -40,16 +40,17 @@ Starts the daemon process, initializing the P2P Host and the HTTP API Gateway.
 ### Networking & Discovery
 
 The node uses `libp2p` for decentralized peer discovery.
-*   **Default**: Uses mDNS (Local Network) if no bootnodes are specified.
-*   **Public**: Uses DHT/Kademlia when connected to Bootnodes.
+
+*   **Identity Persistence**: On first run, the node generates a stable identity key stored in `node_key.dat`. DO NOT lose this file if running a validator/bootnode.
+*   **Default Bootnodes**: If `--bootnodes` is omitted, the node automatically connects to the official Unisalento Mainnet (via `sole.nicolocarcagni.dev`).
+*   **Local Discovery**: Uses mDNS to find peers on the same LAN.
 
 ### Common Scenarios
 
 **Scenario A: Client Domestico (Connecting to Network)**
-Connects to an existing entry-point in the main network.
+Simply start the node! It will use default bootnodes.
 ```bash
-./sole-cli startnode \
-  --bootnodes "/dns4/bootnode.sole-chain.com/tcp/3000/p2p/QmHash..."
+./sole-cli startnode
 ```
 
 **Scenario B: VPS Server / Bootnode (Public Node)**
