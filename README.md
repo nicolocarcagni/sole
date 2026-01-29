@@ -45,7 +45,6 @@ Get your node running locally in seconds.
 
 ## 📚 Documentation
 
-*   **[Deployment Guide](docs/DEPLOYMENT.md)**: Zero-to-Hero VPS Setup (Systemd + Nginx).
 *   **[Ecosystem & Clients](docs/ECOSYSTEM.md)**: Wallet Manager & Integrations.
 *   **[API Reference](docs/api_reference.md)**: Endpoints for developers.
 *   **[CLI Manual](docs/cli_manual.md)**: Command flags usage.
