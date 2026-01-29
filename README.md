@@ -15,6 +15,7 @@ The SOLE network is designed to be a **Hybrid P2P Network** that bridges the gap
 
 *   **Consensus**: Proof of Authority (PoA). Selected validators (Rettore, Capo dipartimento, Docenti) sign blocks, ensuring low energy consumption and high throughput.
 *   **Performance**: **Persistent UTXO Set** (BadgerDB backed) for O(1) balance checks and instant transactions.
+*   **Tokenomics**: **Max Supply 19.55M SOLE**, Halving every 195.5k blocks, designed for long-term sustainability.
 *   **Networking**: Built on `libp2p`. Supports DHT Discovery, NAT Traversal, and MDNS for local peers.
 *   **Storage**: Uses BadgerDB (v3), a fast key-value store optimized for SSDs.
 *   **Interoperability**: Exposes a RESTful JSON API for easy integration with Wallets, Bots, and Explorers.

@@ -111,7 +111,23 @@ When a node receives a block, it verifies:
 2.  **Authority**: The signer's public key must exist in the `AuthorizedValidators` list.
 3.  **Integrity**: The block hash must match the content.
 
-## 7. Networking & P2P
+## 7. Economic Model (Tokenomics)
+
+The SOLE economic model is designed to mimic digital scarcity while honoring the history of the University of Salento.
+
+### Parameters
+*   **Unit**: 1 SOLE = 100,000,000 Photons (10^8).
+*   **Max Supply**: **19,550,000 SOLE** (Commemorating the founding year 1955).
+*   **Emission Curve**: Deflationary model heavily inspired by Bitcoin.
+
+### Halving Schedule
+*   **Initial Reward**: 50 SOLE per block.
+*   **Halving Interval**: Every **195,500 Blocks**.
+*   **Total Era Duration**: 64 Halvings (mathematical limit).
+
+This ensures a predictable and transparent issuance policy, preventing inflation and incentivizing early validators.
+
+## 8. Networking & P2P
 
 The networking layer is built on top of **Libp2p**, a modular network stack.
 
@@ -126,7 +142,7 @@ Nodes communicate using a custom binary protocol over TCP/QUIC streams (`/sole/1
 *   `GetData`: Requesting full data for a specific hash.
 *   `Block / Tx`: The actual data payload.
 
-## 8. Ecosystem: Client & API
+## 9. Ecosystem: Client & API
 
 ### REST API
 The core node runs an HTTP API Server (default port `8080`) enabling external integration.
@@ -137,7 +153,7 @@ The core node runs an HTTP API Server (default port `8080`) enabling external in
 *   **sole-cli**: The native Go command-line tool for node management and wallet operations.
 *   **Python SDK**: An external ecosystem of Python scripts (Wallet, Telegram Bot) that interact with the node via the REST API, demonstrating the platform's interoperability.
 
-## 9. Conclusion & Future Roadmap
+## 10. Conclusion & Future Roadmap
 
 The SOLE Blockchain successfully demonstrates a working, performant, and secure distributed ledger for educational use. By leveraging Go, BadgerDB, and Libp2p, it achieves a high level of technical maturity.
 
