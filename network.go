@@ -549,9 +549,14 @@ func (s *Server) AttemptMine() {
 		return
 	}
 
+	// Calculate Dynamic Block Subsidy (Tokenomics)
+	bestHeight := s.Blockchain.GetBestHeight()
+	nextHeight := bestHeight + 1
+	subsidy := s.Blockchain.GetBlockSubsidy(nextHeight)
+
 	// Add Coinbase for Miner
-	cbTx := NewCoinbaseTX(s.MinerAddr, "", 20) // Miner Reward
-	txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
+	cbTx := NewCoinbaseTX(s.MinerAddr, "", subsidy) // Dynamic Reward
+	txs = append([]*Transaction{cbTx}, txs...)      // Coinbase first
 
 	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
 	s.UTXOSet.Update(newBlock)

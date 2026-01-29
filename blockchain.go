@@ -376,6 +376,34 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 	return true
 }
 
+const (
+	MaxSupply       = 19550000 * 100000000 // 19.55M * 10^8
+	InitialSubsidy  = 50 * 100000000       // 50 SOLE
+	HalvingInterval = 195500               // Blocks
+)
+
+// GetBlockSubsidy calculates the mining reward based on block height (Halving)
+func (chain *Blockchain) GetBlockSubsidy(height int) int64 {
+	halvings := height / HalvingInterval
+
+	// Safety check: If halvings >= 64, shifting will overflow/zero out anyway
+	if halvings >= 64 {
+		return 0
+	}
+
+	subsidy := int64(InitialSubsidy) >> halvings
+
+	if subsidy <= 0 {
+		return 0
+	}
+
+	// Note: We rely on the geometric series sum property:
+	// Sum = Initial * Interval * 2 = 50 * 195500 * 2 = 19,550,000.
+	// So strictly checking TotalSupply from DB is not strictly required to enforce the cap mathematically.
+
+	return subsidy
+}
+
 // FindUnspentTransactions returns a list of transactions containing unspent outputs
 func (chain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
 	var unspentTXs []Transaction
