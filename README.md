@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-success.svg)
 
-**SOLE** ("Sun" in Italian) is an academic **Proof-of-Authority (PoA)** blockchain implementation written in Go.  
+> **SOLE** is an academic **Proof-of-Authority (PoA)** blockchain implementation written in Go.  
 It powers the **Unisalento** digital token ecosystem, designed as a lightweight, performant distributed ledger for educational and research purposes.
 
 ---
@@ -107,5 +107,5 @@ Detailed documentation is available in the `docs/` directory:
 
 ## Disclaimer
 
-This software is a **Proof of Concept (PoC)** developed for the **University of Salento**.  
-It is intended solely for academic research and testing. It applies cryptographic primitives (ECDSA, SHA-256, RIPEMD160) but has not undergone a professional security audit. **Do not use for real-world financial assets.**
+> This software is a **Proof of Concept (PoC)** developed for the **University of Salento**.  
+It is intended (sole)ly for academic research and testing. It applies cryptographic primitives (ECDSA, SHA-256, RIPEMD160) but has not undergone a professional security audit. **Do not use for real-world financial assets.**
