@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/gob"
 	"encoding/hex"
+	"fmt"
 	"log"
+	"strconv"
+	"strings"
 
 	"github.com/dgraph-io/badger/v3"
 )
@@ -31,15 +36,12 @@ func (u UTXOSet) Reindex() {
 
 	err = db.Update(func(txn *badger.Txn) error {
 		for txId, outs := range UTXO {
-			key, err := hex.DecodeString(txId)
-			if err != nil {
-				return err
-			}
-			key = append(bucketName, key...)
-
-			err = txn.Set(key, outs.Serialize())
-			if err != nil {
-				return err
+			for outIdx, out := range outs.Outputs {
+				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txId, outIdx)
+				err := txn.Set([]byte(key), SerializeUTXO(out))
+				if err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -58,56 +60,30 @@ func (u UTXOSet) Update(block *Block) {
 		for _, tx := range block.Transactions {
 			if !tx.IsCoinbase() {
 				for _, vin := range tx.Vin {
-					updatedOuts := TxOutputs{}
-					inTxID := append([]byte(utxoPrefix), vin.Txid...)
-					item, err := txn.Get(inTxID)
+					txID := hex.EncodeToString(vin.Txid)
+					key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
+
+					// Delete spent output
+					err := txn.Delete([]byte(key))
 					if err == badger.ErrKeyNotFound {
-						// Key missing: likely orphan block or double-spend attempt or re-processing.
-						// We ignore it to prevent crash.
-						// fmt.Printf("⚠️  [UTXO] Warning: Input %x not found (already spent?)\n", vin.Txid)
-						continue
+						// Ignored to prevent crash on re-org or double-spend attempt
 					} else if err != nil {
 						return err
-					}
-					v, err := item.ValueCopy(nil)
-					if err != nil {
-						return err
-					}
-
-					outs := DeserializeOutputs(v)
-
-					for outIdx, out := range outs.Outputs {
-						if outIdx != vin.Vout {
-							updatedOuts.Outputs = append(updatedOuts.Outputs, out)
-						}
-					}
-
-					if len(updatedOuts.Outputs) == 0 {
-						err := txn.Delete(inTxID)
-						if err != nil {
-							return err
-						}
-					} else {
-						err := txn.Set(inTxID, updatedOuts.Serialize())
-						if err != nil {
-							return err
-						}
 					}
 				}
 			}
 
-			newOutputs := TxOutputs{}
-			for _, out := range tx.Vout {
-				newOutputs.Outputs = append(newOutputs.Outputs, out)
-			}
+			// Add new outputs
+			for outIdx, out := range tx.Vout {
+				txID := hex.EncodeToString(tx.ID)
+				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
 
-			txID := append([]byte(utxoPrefix), tx.ID...)
-			err := txn.Set(txID, newOutputs.Serialize())
-			if err != nil {
-				return err
+				err := txn.Set([]byte(key), SerializeUTXO(out))
+				if err != nil {
+					return err
+				}
 			}
 		}
-
 		return nil
 	})
 	if err != nil {
@@ -116,6 +92,7 @@ func (u UTXOSet) Update(block *Block) {
 }
 
 // FindSpendableOutputs finds and returns unspent outputs to reference in inputs
+// Returns accumulated amount and a map of TxID -> []Vout (Output Index)
 func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
 	accumulated := int64(0)
@@ -129,20 +106,25 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
-			k := item.Key()
+			k := string(item.Key())
 			v, err := item.ValueCopy(nil)
 			if err != nil {
 				return err
 			}
-			k = k[len(utxoPrefix):]
-			txID := hex.EncodeToString(k)
-			outs := DeserializeOutputs(v)
 
-			for outIdx, out := range outs.Outputs {
-				if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
-					accumulated += out.Value
-					unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
-				}
+			// Key format: utxo-<txID>-<outIdx>
+			parts := strings.Split(k, "-")
+			if len(parts) < 3 {
+				continue
+			}
+			txID := parts[1]
+			outIdx, _ := strconv.Atoi(parts[2])
+
+			out := DeserializeUTXO(v)
+
+			if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
+				accumulated += out.Value
+				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
 			}
 		}
 		return nil
@@ -154,8 +136,8 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 	return accumulated, unspentOutputs
 }
 
-// FindUnspentTransactions returns a list of outputs belonging to the address
-// Note: We return TxOutputs here since we don't need full Transaction struct for balance check
+// FindUnspentOutputs returns a list of outputs belonging to the address
+// Used for Balance calculation
 func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 	var UTXOs []TxOutput
 	db := u.Blockchain.Database
@@ -172,12 +154,10 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 			if err != nil {
 				return err
 			}
-			outs := DeserializeOutputs(v)
+			out := DeserializeUTXO(v)
 
-			for _, out := range outs.Outputs {
-				if out.IsLockedWithKey(pubKeyHash) {
-					UTXOs = append(UTXOs, out)
-				}
+			if out.IsLockedWithKey(pubKeyHash) {
+				UTXOs = append(UTXOs, out)
 			}
 		}
 		return nil
@@ -189,7 +169,7 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 	return UTXOs
 }
 
-// CountTransactions returns the number of transactions in the UTXO set
+// CountTransactions returns the number of UTXOs (not Transactions!)
 func (u UTXOSet) CountTransactions() int {
 	db := u.Blockchain.Database
 	counter := 0
@@ -210,4 +190,25 @@ func (u UTXOSet) CountTransactions() int {
 	}
 
 	return counter
+}
+
+// Helper functions for serialization since we are storing individual TxOutputs
+func SerializeUTXO(out TxOutput) []byte {
+	var buff bytes.Buffer
+	enc := gob.NewEncoder(&buff)
+	err := enc.Encode(out)
+	if err != nil {
+		log.Panic(err)
+	}
+	return buff.Bytes()
+}
+
+func DeserializeUTXO(data []byte) TxOutput {
+	var out TxOutput
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	err := dec.Decode(&out)
+	if err != nil {
+		log.Panic(err)
+	}
+	return out
 }

@@ -277,6 +277,12 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		txCopy.ID = txCopy.Hash()
 		txCopy.Vin[inID].PubKey = nil
 
+		// Verify ownership: Check if the input signer's key hashes to the output's PubKeyHash
+		signerHash := HashPubKey(vin.PubKey)
+		if !bytes.Equal(signerHash, prevTx.Vout[vin.Vout].PubKeyHash) {
+			return false
+		}
+
 		r := big.Int{}
 		s := big.Int{}
 		if len(vin.Signature) != 64 {
