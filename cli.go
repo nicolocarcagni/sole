@@ -264,10 +264,15 @@ func runInit(cmd *cobra.Command, args []string) {
 	}
 	defer chain.Database.Close()
 
+	// Auto-Reindex UTXO Set
+	UTXOSet := UTXOSet{chain}
+	UTXOSet.Reindex()
+
 	fmt.Println("\n☀️  SOLE Blockchain Inizializzata!")
 	fmt.Printf("- Genesis Hash: %x\n", chain.LastHash)
 	fmt.Println("- Network: Unisalento Mainnet")
-	fmt.Println("- Pronti a partire. Esegui 'createwallet' o 'startnode'.")
+	fmt.Println("- UTXO Set: Reindicizzato automaticamente.")
+	fmt.Println("- Esegui 'createwallet' o 'startnode'.")
 }
 
 func createWallet(cmd *cobra.Command, args []string) {
