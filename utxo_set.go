@@ -61,7 +61,12 @@ func (u UTXOSet) Update(block *Block) {
 					updatedOuts := TxOutputs{}
 					inTxID := append([]byte(utxoPrefix), vin.Txid...)
 					item, err := txn.Get(inTxID)
-					if err != nil {
+					if err == badger.ErrKeyNotFound {
+						// Key missing: likely orphan block or double-spend attempt or re-processing.
+						// We ignore it to prevent crash.
+						// fmt.Printf("⚠️  [UTXO] Warning: Input %x not found (already spent?)\n", vin.Txid)
+						continue
+					} else if err != nil {
 						return err
 					}
 					v, err := item.ValueCopy(nil)

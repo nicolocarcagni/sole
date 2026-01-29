@@ -327,7 +327,7 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 	_, err := chain.GetBlock(block.Hash)
 	if err == nil {
 		// fmt.Printf("📦 [Blockchain] Block %x already exists. Skipping.\n", block.Hash[:4])
-		return true // Already processed
+		return false // Already processed
 	}
 
 	// Verify PoA signature first
