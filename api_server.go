@@ -94,13 +94,14 @@ type JSONTransactionResponse struct {
 }
 
 type JSONInput struct {
-	SenderAddress string `json:"sender"`
+	SenderAddress string `json:"sender_address"`
 	Signature     string `json:"signature"`
 }
 
 type JSONOutput struct {
-	ReceiverAddress string `json:"receiver"`
-	Value           int64  `json:"value"`
+	ReceiverAddress string  `json:"receiver_address"`
+	Value           int64   `json:"value"`
+	ValueSole       float64 `json:"value_sole"`
 }
 
 // Helper: Convert PubKey to Address
@@ -145,6 +146,7 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 		outputs = append(outputs, JSONOutput{
 			ReceiverAddress: PubKeyHashToAddress(vout.PubKeyHash),
 			Value:           vout.Value,
+			ValueSole:       float64(vout.Value) / 100000000.0,
 		})
 	}
 
@@ -153,6 +155,33 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 		Inputs:    inputs,
 		Outputs:   outputs,
 		Timestamp: tx.Timestamp,
+	}
+}
+
+type JSONBlock struct {
+	Timestamp     int64                     `json:"timestamp"`
+	Height        int                       `json:"height"`
+	PrevBlockHash string                    `json:"prev_block_hash"`
+	Hash          string                    `json:"hash"`
+	Transactions  []JSONTransactionResponse `json:"transactions"`
+	Validator     string                    `json:"validator"`
+	Signature     string                    `json:"signature"`
+}
+
+func ToJSONBlock(block *Block) JSONBlock {
+	var jsonTxs []JSONTransactionResponse
+	for _, tx := range block.Transactions {
+		jsonTxs = append(jsonTxs, ToJSONResponse(tx))
+	}
+
+	return JSONBlock{
+		Timestamp:     block.Timestamp,
+		Height:        block.Height,
+		PrevBlockHash: hex.EncodeToString(block.PrevBlockHash),
+		Hash:          hex.EncodeToString(block.Hash),
+		Transactions:  jsonTxs,
+		Validator:     hex.EncodeToString(block.Validator),
+		Signature:     hex.EncodeToString(block.Signature),
 	}
 }
 
@@ -243,9 +272,9 @@ func (rs *RestServer) getBlock(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// We might want a custom JSON representation for Block if fields are private or complex
-	// But Block fields are exported, so automatic JSON should work roughly ok
-	json.NewEncoder(w).Encode(block)
+	// Convert to JSONBlock to have enriched transaction data
+	jsonBlock := ToJSONBlock(&block)
+	json.NewEncoder(w).Encode(jsonBlock)
 }
 
 func (rs *RestServer) getTransactions(w http.ResponseWriter, r *http.Request) {
