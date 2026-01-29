@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -41,6 +42,33 @@ func NewTxOutput(value int64, address string) *TxOutput {
 	txo := &TxOutput{value, nil}
 	txo.Lock([]byte(address))
 	return txo
+}
+
+// TxOutputs collects TxOutput
+type TxOutputs struct {
+	Outputs []TxOutput
+}
+
+// Serialize serializes TxOutputs
+func (outs TxOutputs) Serialize() []byte {
+	var buff bytes.Buffer
+	enc := gob.NewEncoder(&buff)
+	err := enc.Encode(outs)
+	if err != nil {
+		log.Panic(err)
+	}
+	return buff.Bytes()
+}
+
+// DeserializeOutputs deserializes TxOutputs
+func DeserializeOutputs(data []byte) TxOutputs {
+	var outputs TxOutputs
+	dec := gob.NewDecoder(bytes.NewReader(data))
+	err := dec.Decode(&outputs)
+	if err != nil {
+		log.Panic(err)
+	}
+	return outputs
 }
 
 // TxInput represents a transaction input
@@ -312,7 +340,7 @@ func NewCoinbaseTX(to, data string, amount int64) *Transaction {
 }
 
 // NewUTXOTransaction creates a new transaction
-func NewUTXOTransaction(from, to string, amount int64, utxoSet *Blockchain) *Transaction {
+func NewUTXOTransaction(from, to string, amount int64, utxoSet *UTXOSet) *Transaction {
 	var inputs []TxInput
 	var outputs []TxOutput
 
@@ -355,7 +383,7 @@ func NewUTXOTransaction(from, to string, amount int64, utxoSet *Blockchain) *Tra
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
 	tx.ID = tx.Hash()
-	utxoSet.SignTransaction(&tx, wallet.GetPrivateKey())
+	utxoSet.Blockchain.SignTransaction(&tx, wallet.GetPrivateKey())
 
 	return &tx
 }

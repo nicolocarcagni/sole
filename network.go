@@ -41,6 +41,7 @@ var (
 type Server struct {
 	Host             host.Host
 	Blockchain       *Blockchain
+	UTXOSet          *UTXOSet
 	MinerAddr        string
 	ValidatorPrivKey *ecdsa.PrivateKey
 	KnownPeers       map[string]string // PeerID string -> Addr
@@ -188,10 +189,12 @@ func NewServer(cfg ServerConfig) *Server {
 	}
 
 	chain := ContinueBlockchain("")
+	UTXOSet := &UTXOSet{chain}
 
 	server := &Server{
 		Host:             h,
 		Blockchain:       chain,
+		UTXOSet:          UTXOSet,
 		MinerAddr:        cfg.MinerAddr,
 		ValidatorPrivKey: cfg.PrivKey,
 		KnownPeers:       make(map[string]string),
@@ -459,8 +462,12 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 	block := DeserializeBlock(payload.Block)
 	fmt.Printf("ricevuto nuovo blocco! Hash: %x\n", block.Hash)
 
-	s.Blockchain.AddBlock(block)
-	fmt.Printf("Blocco aggiunto %x\n", block.Hash)
+	if s.Blockchain.AddBlock(block) {
+		s.UTXOSet.Update(block)
+		fmt.Printf("Blocco aggiunto %x e UTXO set aggiornato.\n", block.Hash)
+	} else {
+		fmt.Printf("Blocco scartato o duplicato: %x\n", block.Hash)
+	}
 
 	if len(s.Mempool) > 0 {
 		for _, tx := range block.Transactions {
@@ -547,11 +554,12 @@ func (s *Server) AttemptMine() {
 	txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
 
 	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
+	s.UTXOSet.Update(newBlock)
 
 	// Clear Mempool
 	s.Mempool = make(map[string]Transaction)
 
-	fmt.Printf("Nuovo blocco forgiato: %x\n", newBlock.Hash)
+	fmt.Printf("Nuovo blocco forgiato: %x (UTXO updated)\n", newBlock.Hash)
 
 	// Broadcast new block
 	peers := s.Host.Network().Peers()

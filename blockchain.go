@@ -467,6 +467,50 @@ func (chain *Blockchain) FindTransactions(address string) []Transaction {
 	return txs
 }
 
+// FindUTXO finds all unspent transaction outputs and returns them
+func (chain *Blockchain) FindUTXO() map[string]TxOutputs {
+	UTXO := make(map[string]TxOutputs)
+	spentTXOs := make(map[string][]int)
+	iter := chain.Iterator()
+
+	for {
+		block := iter.Next()
+
+		for _, tx := range block.Transactions {
+			txID := hex.EncodeToString(tx.ID)
+
+		Outputs:
+			for outIdx, out := range tx.Vout {
+				// Was the output spent?
+				if spentTXOs[txID] != nil {
+					for _, spentOut := range spentTXOs[txID] {
+						if spentOut == outIdx {
+							continue Outputs
+						}
+					}
+				}
+
+				outs := UTXO[txID]
+				outs.Outputs = append(outs.Outputs, out)
+				UTXO[txID] = outs
+			}
+
+			if !tx.IsCoinbase() {
+				for _, in := range tx.Vin {
+					inTxID := hex.EncodeToString(in.Txid)
+					spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
+				}
+			}
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return UTXO
+}
+
 // FindSpendableOutputs finds and returns unspent outputs to reference in inputs
 func (chain *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
 	unspentOutputs := make(map[string][]int)

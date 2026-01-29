@@ -129,6 +129,14 @@ func init() {
 		Short: "Start the P2P node",
 		Run:   startNode,
 	}
+	// reindex
+	var reindexCmd = &cobra.Command{
+		Use:   "reindex",
+		Short: "Rebuilds the UTXO set",
+		Run:   reindexUTXO,
+	}
+	rootCmd.AddCommand(reindexCmd)
+
 	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "Porta P2P")
 	startNodeCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Indirizzo IP locale di ascolto P2P")
 	startNodeCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Indirizzo IP Pubblico (Annuncio)")
@@ -276,19 +284,16 @@ func getBalance(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	chain := ContinueBlockchain(addressFlag)
+	UTXOSet := UTXOSet{chain}
 	defer chain.Database.Close()
 
 	balance := int64(0)
 	pubKeyHash, _ := Base58Decode([]byte(addressFlag))
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-	utxos := chain.FindUnspentTransactions(pubKeyHash)
+	utxos := UTXOSet.FindUnspentOutputs(pubKeyHash)
 
-	for _, tx := range utxos {
-		for _, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) {
-				balance += out.Value
-			}
-		}
+	for _, out := range utxos {
+		balance += out.Value
 	}
 
 	fmt.Printf("Saldo di '%s': %d Fotoni (%.8f SOLE)\n", addressFlag, balance, float64(balance)/100000000.0)
@@ -320,13 +325,14 @@ func send(cmd *cobra.Command, args []string) {
 
 	// Open snapshot
 	chain := ContinueBlockchainSnapshot(snapshotPath)
+	UTXOSet := UTXOSet{chain}
 	defer chain.Database.Close()
 
 	// Conversion: SOLE (Float) -> Fotoni (Int64)
 	amountInt := int64(amountFlag * 100000000)
 	fmt.Printf("💸 Invio in corso: %.8f SOLE (%d Fotoni)\n", amountFlag, amountInt)
 
-	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, chain)
+	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, &UTXOSet)
 
 	if dryRunFlag {
 		fmt.Printf("%x", tx.Serialize())
@@ -483,4 +489,15 @@ func listAddresses(cmd *cobra.Command, args []string) {
 		fmt.Println(address)
 	}
 	fmt.Println("=====================")
+}
+
+func reindexUTXO(cmd *cobra.Command, args []string) {
+	chain := ContinueBlockchain("")
+	defer chain.Database.Close()
+
+	UTXOSet := UTXOSet{chain}
+	UTXOSet.Reindex()
+
+	count := UTXOSet.CountTransactions()
+	fmt.Printf("✅ Reincizzazione completata! Ci sono %d transazioni nell'insieme UTXO.\n", count)
 }
