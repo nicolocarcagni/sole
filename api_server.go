@@ -37,6 +37,7 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	router.Handle("/blocks/tip", readMW(http.HandlerFunc(rs.getTip))).Methods("GET")
 	router.Handle("/blocks/{hash}", readMW(http.HandlerFunc(rs.getBlock))).Methods("GET")
 	router.Handle("/transactions/{address}", readMW(http.HandlerFunc(rs.getTransactions))).Methods("GET")
+	router.Handle("/transaction/{id}", readMW(http.HandlerFunc(rs.getTransaction))).Methods("GET")
 
 	// Stricter limit for Sending Transactions
 	router.Handle("/tx/send", writeMW(http.HandlerFunc(rs.sendTx))).Methods("POST")
@@ -294,6 +295,27 @@ func (rs *RestServer) getTransactions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	json.NewEncoder(w).Encode(jsonTxs)
+}
+
+func (rs *RestServer) getTransaction(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	txIDHex := vars["id"]
+
+	txID, err := hex.DecodeString(txIDHex)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid transaction ID format"})
+		return
+	}
+
+	tx, err := rs.P2P.Blockchain.FindTransaction(txID)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction not found"})
+		return
+	}
+
+	jsonTx := ToJSONResponse(&tx)
+	json.NewEncoder(w).Encode(jsonTx)
 }
 
 func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
