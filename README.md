@@ -31,11 +31,6 @@ Get your node running locally in seconds.
 2.  **Initialize**: `./sole-cli init`
 3.  **Run**: `./sole-cli startnode`
 
-### 🌍 **Going Online (Public Network)**
-To deploy a public node on a VPS (DigitalOcean, AWS, Hetzner) accessible via the Internet:
-
-👉 **[Read the Bare Metal Deployment Guide](docs/DEPLOYMENT.md)**
-
 ---
 
 ## 🌟 Key Features
