@@ -1,55 +1,111 @@
-# SOLE Blockchain ☀️
+# SOLE Blockchain
 
 ![Go Report](https://goreportcard.com/badge/github.com/nicolocarcagni/sole)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-success.svg)
 
-> **SOLE** is a lightweight, academic Proof-of-Authority (PoA) blockchain written in **Go**. It powers the **Unisalento** digital token ecosystem, serving as a robust case study for distributed ledger technology.
+**SOLE** ("Sun" in Italian) is an academic **Proof-of-Authority (PoA)** blockchain implementation written in Go.  
+It powers the **Unisalento** digital token ecosystem, designed as a lightweight, performant distributed ledger for educational and research purposes.
 
 ---
 
-## 🏗 Architecture
+## 🏛 Project Overview
 
-The ecosystem follows a decoupled, **Hybrid Network** architecture:
-*   **Public VPS Nodes**: Acts as Bootnodes and API Gateways (Always Online).
-*   **Home/Private Nodes**: Connect via NAT Traversal and participate in validation.
+The SOLE network is designed to be a **Hybrid P2P Network** that bridges the gap between robust, always-online public nodes and ephemeral private clients.
 
-```mermaid
-graph LR
-    A["Telegram Bot/Apps"] <-->|HTTPS| B("Public VPS Node");
-    B <-->|P2P/Internet| C["Other VPS Nodes"];
-    C <-->|NAT Traversal| D["Home Node (Private)"];
-    B -->|Persist| E[BadgerDB];
+*   **Consensus**: Proof of Authority (PoA). Selected validators (Rettore, Capo dipartimento, Docenti) sign blocks, ensuring low energy consumption and high throughput.
+*   **Networking**: Built on `libp2p`. Supports DHT Discovery, NAT Traversal, and MDNS for local peers.
+*   **Storage**: Uses BadgerDB (v3), a fast key-value store optimized for SSDs.
+*   **Interoperability**: Exposes a RESTful JSON API for easy integration with Wallets, Bots, and Explorers.
+
+## 🚀 Getting Started
+
+### Prerequisites
+*   **Go** 1.19 or higher
+
+### Installation
+
+Clone the repository and build the CLI tool:
+
+```bash
+git clone https://github.com/nicolocarcagni/sole.git
+cd sole
+go build -o sole-cli .
 ```
 
-## 🚀 Quick Start
+### Running a Node
 
-### Local Development
-Get your node running locally in seconds.
+To join the main network immediately (Zero-Config):
 
-1.  **Build**: `go build -o sole-cli .`
-2.  **Initialize**: `./sole-cli init`
-3.  **Run**: `./sole-cli startnode`
+```bash
+./sole-cli init
+./sole-cli startnode
+```
+
+The node will automatically:
+1.  Initialize a secure identity (`node_key.dat`).
+2.  Connect to the default public bootnodes (`sole.nicolocarcagni.dev`).
+3.  Begin synchronizing the blockchain.
 
 ---
 
-## 🌟 Key Features
+## 🛠 Command Line Interface
 
-*   **Consensus Core**: **Proof of Authority (PoA)** engine using ECDSA. Energy-efficient validation.
-*   **Public P2P Network**: Full Internet support with **DNS Discovery** and **NAT Traversal**.
-*   **Secure API**: Built-in support for **HTTPS/TLS** (via Reverse Proxy) and Rate Limiting.
-*   **Reliability**: **Graceful Shutdown**, BadgerDB v3 persistence, and Systemd integration.
-*   **Ecosystem**: Full support for custodial apps like the **Telegram Bot**.
+The `sole-cli` tool manages all aspects of the node and wallet.
+
+### Wallet Management
+
+```bash
+# Create a new wallet address and keypair
+./sole-cli createwallet
+
+# Check the balance of an address
+./sole-cli getbalance --address <ADDRESS>
+```
+
+### Transactions
+
+Send tokens (SOLE) to another address.
+
+```bash
+./sole-cli send --from <SENDER> --to <RECEIVER> --amount <VALUE>
+```
+
+### Mining (Validators Only)
+
+If you hold a validator key, you can start the node in mining mode:
+
+```bash
+./sole-cli startnode --miner <VALIDATOR_ADDRESS>
+```
+
+---
+
+## 🔌 API Integration
+
+Developers can interact with the node via HTTP. The default port is `8080`.
+
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/blocks/tip` | `GET` | Get current chain height and hash. |
+| `/balance/{address}` | `GET` | Get confirmed balance. |
+| `/transactions/{address}` | `GET` | Get full transaction history. |
+| `/tx/send` | `POST` | Broadcast a signed transaction. |
+
+> See the full [API Reference](docs/api_reference.md) for details.
 
 ---
 
 ## 📚 Documentation
 
-*   **[Ecosystem & Clients](docs/ECOSYSTEM.md)**: Wallet Manager & Integrations.
-*   **[API Reference](docs/api_reference.md)**: Endpoints for developers.
-*   **[CLI Manual](docs/cli_manual.md)**: Command flags usage.
+Detailed documentation is available in the `docs/` directory:
+
+*   **[API Reference](docs/api_reference.md)**: complete endpoints specification.
+*   **[CLI Manual](docs/cli_manual.md)**: flags and advanced configuration.
 
 ---
 
-> **⚠️ ACADEMIC PROJECT**
-> This software is a Proof of Concept (PoC) developed for educational and research purposes at the **University of Salento**. It is not intended for production financial use.
+## Disclaimer
+
+This software is a **Proof of Concept (PoC)** developed for the **University of Salento**.  
+It is intended solely for academic research and testing. It applies cryptographic primitives (ECDSA, SHA-256, RIPEMD160) but has not undergone a professional security audit. **Do not use for real-world financial assets.**
