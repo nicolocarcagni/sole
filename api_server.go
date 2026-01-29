@@ -45,7 +45,7 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	fmt.Printf("🚀 API Server started on http://%s\n", addr)
 
 	srv := &http.Server{
-		Handler:      router,
+		Handler:      CORSMiddleware(router),
 		Addr:         addr,
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
@@ -57,9 +57,6 @@ func StartRestServer(server *Server, listenHost string, port int) {
 func commonMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*") // CORS
-		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS, PUT, DELETE")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 		next.ServeHTTP(w, r)
 	})
 }
