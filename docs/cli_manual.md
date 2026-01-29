@@ -15,6 +15,11 @@ Initializes the blockchain database in `./data/blocks`.
 Generates a new ECDSA keypair.
 *   **Output**: Saves keys to `wallet.dat`. Prints new Address (Base58).
 
+### `reindex`
+Rebuilds the Persistent UTXO Set from the blockchain history.
+*   **Use Condition**: Run this if you upgraded an old node or suspect database corruption.
+*   **Effect**: Scans the full chain and repopulates the fast-access UTXO bucket.
+
 ---
 
 ## Node Operation (`startnode`)
