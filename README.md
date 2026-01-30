@@ -18,7 +18,7 @@ The SOLE network is designed to be a **Hybrid P2P Network** that bridges the gap
 *   **Tokenomics**: **Max Supply 19.55M SOLE**, Halving every 195.5k blocks, designed for long-term sustainability.
 *   **Networking**: Built on `libp2p`. Supports DHT Discovery, NAT Traversal, and MDNS for local peers.
 *   **Storage**: Uses BadgerDB (v3), a fast key-value store optimized for SSDs.
-*   **Interoperability**: Exposes a RESTful JSON API for easy integration with Wallets, Bots, and Explorers.
+*   **Interoperability**: Exposes a RESTful JSON API with **CORS Support** and **Rich JSON Responses** (Sender/Receiver Address resolution) for easy integration with Web Explorers and Wallets.
 
 ## 🚀 Getting Started
 
@@ -92,6 +92,7 @@ Developers can interact with the node via HTTP. The default port is `8080`.
 | `/blocks/tip` | `GET` | Get current chain height and hash. |
 | `/balance/{address}` | `GET` | Get confirmed balance. |
 | `/transactions/{address}` | `GET` | Get full transaction history. |
+| `/transaction/{id}` | `GET` | Get details of a single transaction. |
 | `/tx/send` | `POST` | Broadcast a signed transaction. |
 
 > See the full [API Reference](docs/api_reference.md) for details.

@@ -65,15 +65,55 @@ Retrieves all transactions (sent and received) associated with an address.
 `GET /transactions/{address}`
 
 **Response**
-Returns an array of Transaction objects.
+Returns an array of **Rich Transaction Objects**.
 ```json
 [
   {
-    "ID": "Base64encodedBytes...",
-    "Vin": [...],
-    "Vout": [...]
+    "id": "775a47b2...",
+    "inputs": [
+      {
+        "sender_address": "15U3MUvm...",
+        "signature": "30450221..."
+      }
+    ],
+    "outputs": [
+      {
+        "receiver_address": "1J7md...",
+        "value": 100000000,
+        "value_sole": 1.0
+      }
+    ],
+    "timestamp": 1706572800
   }
 ]
+```
+
+---
+
+### 4. Get Single Transaction
+Retrieves details of a specific transaction by its Hash ID (Hex).
+
+**Request**
+`GET /transaction/{txid}`
+
+**Response**
+Returns a single **Rich Transaction Object**.
+
+```json
+{
+  "id": "775a47b2...",
+  "inputs": [...],
+  "outputs": [...],
+  "timestamp": 1706572800
+}
+```
+
+**Errors**
+*   `404 Not Found`: If transaction does not exist.
+
+**Example**
+```bash
+curl -s http://localhost:8080/transaction/775a47b2...
 ```
 
 **Example**
@@ -83,7 +123,7 @@ curl -s http://localhost:8080/transactions/15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw
 
 ---
 
-### 3. Chain Info
+### 5. Chain Info
 Getting the current state of the blockchain tip.
 
 **Request**
