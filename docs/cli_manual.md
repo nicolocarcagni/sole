@@ -82,8 +82,10 @@ Configures the node to be reachable from the internet.
 Utilities for transferring funds.
 
 ```bash
-./sole-cli send --from <ADDR> --to <ADDR> --amount <INT> [flags]
+./sole-cli send --from <ADDR> --to <ADDR> --amount <VALUE> [flags]
 ```
+
+*   **`<VALUE>`**: Amount to send in **SOLE** (es. `10.5` equates to 10.50000000 Photons). Accepts decimals.
 
 **Options**
 *   **`--dry-run`**: Prints the raw signed transaction Hex to stdout **without** broadcasting it. Useful for API integration or offline signing.
