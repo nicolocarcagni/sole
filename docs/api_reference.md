@@ -123,7 +123,47 @@ curl -s http://localhost:8080/transactions/15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw
 
 ---
 
-### 5. Chain Info
+---
+
+### 5. Network Peers
+Retrieves the list of currently connected P2P peers.
+
+**Request**
+`GET /network/peers`
+
+**Response**
+```json
+{
+  "total_peers": 3,
+  "peers": [
+    "QmXyZ...",
+    "QmAbC..."
+  ]
+}
+```
+
+---
+
+### 6. Consensus Validators
+Retrieves the list of authorized PoA validators.
+
+**Request**
+`GET /consensus/validators`
+
+**Response**
+```json
+{
+  "total_validators": 2,
+  "validators": [
+    "033cc6...",
+    "5b28a2..."
+  ]
+}
+```
+
+---
+
+### 7. Chain Info
 Getting the current state of the blockchain tip.
 
 **Request**

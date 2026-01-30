@@ -38,6 +38,8 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	router.Handle("/blocks/{hash}", readMW(http.HandlerFunc(rs.getBlock))).Methods("GET")
 	router.Handle("/transactions/{address}", readMW(http.HandlerFunc(rs.getTransactions))).Methods("GET")
 	router.Handle("/transaction/{id}", readMW(http.HandlerFunc(rs.getTransaction))).Methods("GET")
+	router.Handle("/network/peers", readMW(http.HandlerFunc(rs.getPeers))).Methods("GET")
+	router.Handle("/consensus/validators", readMW(http.HandlerFunc(rs.getValidators))).Methods("GET")
 
 	// Stricter limit for Sending Transactions
 	router.Handle("/tx/send", writeMW(http.HandlerFunc(rs.sendTx))).Methods("POST")
@@ -103,6 +105,16 @@ type JSONOutput struct {
 	ReceiverAddress string  `json:"receiver_address"`
 	Value           int64   `json:"value"`
 	ValueSole       float64 `json:"value_sole"`
+}
+
+type PeerResponse struct {
+	TotalPeers int      `json:"total_peers"`
+	Peers      []string `json:"peers"`
+}
+
+type ValidatorResponse struct {
+	TotalValidators int      `json:"total_validators"`
+	Validators      []string `json:"validators"`
 }
 
 // Helper: Convert PubKey to Address
@@ -316,6 +328,29 @@ func (rs *RestServer) getTransaction(w http.ResponseWriter, r *http.Request) {
 
 	jsonTx := ToJSONResponse(&tx)
 	json.NewEncoder(w).Encode(jsonTx)
+}
+
+func (rs *RestServer) getPeers(w http.ResponseWriter, r *http.Request) {
+	peers := rs.P2P.Host.Network().Peers()
+	var peerList []string
+	for _, p := range peers {
+		peerList = append(peerList, p.String())
+	}
+
+	response := PeerResponse{
+		TotalPeers: len(peerList),
+		Peers:      peerList,
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+func (rs *RestServer) getValidators(w http.ResponseWriter, r *http.Request) {
+	validators := AuthorizedValidators
+	response := ValidatorResponse{
+		TotalValidators: len(validators),
+		Validators:      validators,
+	}
+	json.NewEncoder(w).Encode(response)
 }
 
 func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
