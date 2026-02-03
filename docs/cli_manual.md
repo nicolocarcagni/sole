@@ -8,8 +8,9 @@ The `sole-cli` is the comprehensive tool for managing your node and wallet.
 
 ### `init`
 Initializes the blockchain database in `./data/blocks`.
-*   **Use Condition**: Must be run once before starting a node if the database doesn't exist.
+*   **Use Condition**: Must be run once before starting a node.
 *   **Effect**: Creates Genesis Block (PoA) and **automatically builds the UTXO set**.
+*   **Safety**: If the database already exists, the command will abort to prevent accidental overwrite.
 
 ### `createwallet`
 Generates a new ECDSA keypair.

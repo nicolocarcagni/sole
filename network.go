@@ -111,6 +111,7 @@ type ServerConfig struct {
 	ListenHost string
 	Port       int
 	PublicIP   string
+	PublicDNS  string
 	Bootnodes  []string
 	MinerAddr  string
 	PrivKey    *ecdsa.PrivateKey
@@ -159,8 +160,18 @@ func NewServer(cfg ServerConfig) *Server {
 		// libp2p.NATPortMap(), // Optional but good practice
 	}
 
-	// Handle Public IP Announcement (NAT Traversal)
-	if cfg.PublicIP != "" {
+	// Handle Public IP/DNS Announcement (NAT Traversal)
+	if cfg.PublicDNS != "" {
+		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns4/%s/tcp/%d", cfg.PublicDNS, cfg.Port))
+		if err != nil {
+			log.Panicf("Invalid Public DNS Multiaddr: %s", err)
+		}
+		addrFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
+			return []multiaddr.Multiaddr{externalAddr}
+		}
+		opts = append(opts, libp2p.AddrsFactory(addrFactory))
+		opts = append(opts, libp2p.ForceReachabilityPublic())
+	} else if cfg.PublicIP != "" {
 		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", cfg.PublicIP, cfg.Port))
 		if err != nil {
 			log.Panicf("Invalid Public IP Multiaddr: %s", err)
@@ -433,10 +444,10 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	dec.Decode(&payload)
 
 	if payload.Type == "block" {
-		fmt.Printf("📦 [P2P] Richiesta Dati (Block) | Hash: %x | Peer: %s\n", payload.ID[:4], ShortID(peerID.String()))
+		fmt.Printf("📦 [P2P] Data Request (Block) | Hash: %x | Peer: %s\n", payload.ID[:4], ShortID(peerID.String()))
 		block, err := s.Blockchain.GetBlock(payload.ID)
 		if err != nil {
-			fmt.Printf("⚠️  Oggetto (Block) non trovato per Hash: %x\n", payload.ID)
+			fmt.Printf("⚠️  Object (Block) not found for Hash: %x\n", payload.ID)
 			return
 		}
 		s.SendBlock(peerID, &block)
@@ -444,10 +455,10 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 
 	if payload.Type == "tx" {
 		txID := hex.EncodeToString(payload.ID)
-		fmt.Printf("📦 [P2P] Richiesta Dati (Tx) | Hash: %s... | Peer: %s\n", txID[:8], ShortID(peerID.String()))
+		fmt.Printf("📦 [P2P] Data Request (Tx) | Hash: %s... | Peer: %s\n", txID[:8], ShortID(peerID.String()))
 		tx, ok := s.Mempool[txID]
 		if !ok {
-			fmt.Printf("⚠️  Oggetto (Tx) non trovato in Mempool: %s\n", txID)
+			fmt.Printf("⚠️  Object (Tx) not found in Mempool: %s\n", txID)
 			return
 		}
 		s.SendTx(peerID, &tx)
@@ -460,13 +471,13 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 	dec.Decode(&payload)
 
 	block := DeserializeBlock(payload.Block)
-	fmt.Printf("ricevuto nuovo blocco! Hash: %x\n", block.Hash)
+	fmt.Printf("Received new block! Hash: %x\n", block.Hash)
 
 	if s.Blockchain.AddBlock(block) {
 		s.UTXOSet.Update(block)
-		fmt.Printf("Blocco aggiunto %x e UTXO set aggiornato.\n", block.Hash)
+		fmt.Printf("Block added %x and UTXO set updated.\n", block.Hash)
 	} else {
-		fmt.Printf("Blocco scartato o duplicato: %x\n", block.Hash)
+		fmt.Printf("Block discarded or duplicate: %x\n", block.Hash)
 	}
 
 	if len(s.Mempool) > 0 {
@@ -489,7 +500,7 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	defer s.MempoolMux.Unlock()
 
 	if s.Mempool[hex.EncodeToString(tx.ID)].ID == nil {
-		fmt.Printf("Nuova Transazione in Mempool: %x\n", tx.ID)
+		fmt.Printf("New Transaction in Mempool: %x\n", tx.ID)
 		s.Mempool[hex.EncodeToString(tx.ID)] = tx
 
 		// Propagate
@@ -512,7 +523,7 @@ func (s *Server) StartMiningLoop() {
 	if s.MinerAddr == "" {
 		return
 	}
-	fmt.Println("⛏️  Mining Loop avviato (Intervallo: 10s)")
+	fmt.Println("⛏️  Mining Loop started (Interval: 10s)")
 	ticker := time.NewTicker(10 * time.Second)
 
 	for range ticker.C {
@@ -533,7 +544,7 @@ func (s *Server) AttemptMine() {
 		return
 	}
 
-	fmt.Println("Forging nuovo blocco con transazioni della mempool...")
+	fmt.Println("Forging new block with mempool transactions...")
 	var txs []*Transaction
 	for id := range s.Mempool {
 		tx := s.Mempool[id]
@@ -543,7 +554,7 @@ func (s *Server) AttemptMine() {
 	}
 
 	if len(txs) == 0 {
-		fmt.Println("Tutte le transazioni in mempool sono invalide.")
+		fmt.Println("All transactions in mempool are invalid.")
 		// We should clear invalid txs to avoid infinite loops?
 		// For now simple return.
 		return
@@ -564,7 +575,7 @@ func (s *Server) AttemptMine() {
 	// Clear Mempool
 	s.Mempool = make(map[string]Transaction)
 
-	fmt.Printf("Nuovo blocco forgiato: %x (UTXO updated)\n", newBlock.Hash)
+	fmt.Printf("New block forged: %x (UTXO updated)\n", newBlock.Hash)
 
 	// Broadcast new block
 	peers := s.Host.Network().Peers()

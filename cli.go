@@ -36,6 +36,7 @@ var (
 	dryRunFlag    bool
 	listenFlag    string // Bind Address (0.0.0.0)
 	publicIPFlag  string // Announce Address
+	publicDNSFlag string // Announce Domain (node.sole.com)
 	bootnodesFlag string // Comma-separated bootnodes
 	apiListenFlag string // API Bind Address (0.0.0.0)
 )
@@ -58,7 +59,7 @@ func init() {
 	// init (formerly createblockchain)
 	var initCmd = &cobra.Command{
 		Use:   "init",
-		Short: "Inizializza il database locale con il Blocco Genesi ufficiale SOLE.",
+		Short: "Initializes the local database with the Official Genesis Block.",
 		Run:   runInit,
 	}
 	rootCmd.AddCommand(initCmd)
@@ -137,45 +138,46 @@ func init() {
 	}
 	rootCmd.AddCommand(reindexCmd)
 
-	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "Porta P2P")
-	startNodeCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Indirizzo IP locale di ascolto P2P")
-	startNodeCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Indirizzo IP Pubblico (Annuncio)")
-	startNodeCmd.Flags().StringVar(&bootnodesFlag, "bootnodes", "", "Lista di Bootnodes separati da virgola")
+	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "P2P Port")
+	startNodeCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Local Listen IP for P2P")
+	startNodeCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Public IP Address (Announce)")
+	startNodeCmd.Flags().StringVar(&publicDNSFlag, "public-dns", "", "Public Domain Name (Announce)")
+	startNodeCmd.Flags().StringVar(&bootnodesFlag, "bootnodes", "", "Comma-separated list of Bootnodes")
 	startNodeCmd.Flags().StringVar(&minerFlag, "miner", "", "Miner address")
 	startNodeCmd.Flags().IntVar(&apiPortFlag, "api-port", 8080, "API Server Port")
-	startNodeCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Indirizzo IP locale di ascolto API")
+	startNodeCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Local Listen IP for API")
 	rootCmd.AddCommand(startNodeCmd)
 }
 
 func startNode(cmd *cobra.Command, args []string) {
-	fmt.Printf("Avvio nodo SOLE su porta %d...\n", portFlag)
+	fmt.Printf("Starting SOLE node on port %d...\n", portFlag)
 
 	// Check DB existence if not mining (or even if mining, usually need DB)
 	// But ContinueBlockchain inside StartServer or Network will handle it?
 	// The request asked for check in startnode.
 	if !DBExists() {
-		fmt.Println("⚠️  Database non trovato. Hai eseguito './sole-cli init'?")
+		fmt.Println("⚠️  Database not found. Did you run './sole-cli init'?")
 		os.Exit(1)
 	}
 
 	var validatorPrivKey *ecdsa.PrivateKey
 
 	if minerFlag != "" {
-		fmt.Printf("Forging abilitato per indirizzo: %s\n", minerFlag)
+		fmt.Printf("Forging enabled for address: %s\n", minerFlag)
 
 		// Load wallet for this address
 		wallets, err := CreateWallets()
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Printf("⛔ ERRORE: Chiave privata non trovata per l'indirizzo %s. File wallet.dat mancante.\n", minerFlag)
+				fmt.Printf("⛔ ERROR: Private Key not found for address %s. Wallet file missing.\n", minerFlag)
 				os.Exit(1)
 			}
-			log.Panic("Errore caricamento wallets:", err)
+			log.Panic("Error loading wallets:", err)
 		}
 
 		wallet := wallets.GetWalletRef(minerFlag)
 		if wallet == nil {
-			fmt.Printf("⛔ ERRORE: Chiave privata non trovata per l'indirizzo %s. Non puoi minare senza possedere il wallet.\n", minerFlag)
+			fmt.Printf("⛔ ERROR: Private Key not found for address %s. Cannot mine without owning the wallet.\n", minerFlag)
 			os.Exit(1)
 		}
 
@@ -188,10 +190,10 @@ func startNode(cmd *cobra.Command, args []string) {
 
 		// Authorization Check
 		if !IsAuthorizedValidator(pubKeyHex) {
-			fmt.Printf("⛔ ERRORE: L'indirizzo %s non è un Validatore Autorizzato. Impossibile avviare il mining.\n", minerFlag)
+			fmt.Printf("⛔ ERROR: Address %s is not an Authorized Validator. Mining aborted.\n", minerFlag)
 			os.Exit(1)
 		}
-		fmt.Println("✅ Validatore Autorizzato riconosciuto. Avvio motore di consenso...")
+		fmt.Println("✅ Authorized Validator recognized. Starting Consensus Engine...")
 	}
 
 	// Parse bootnodes
@@ -204,7 +206,7 @@ func startNode(cmd *cobra.Command, args []string) {
 	nodeKeyPath := "node_key.dat"
 	privKeyP2P, err := LoadOrGenerateNodeKey(nodeKeyPath)
 	if err != nil {
-		log.Panic("Errore caricamento chiave nodo:", err)
+		log.Panic("Error loading node key:", err)
 	}
 
 	// Config
@@ -212,6 +214,7 @@ func startNode(cmd *cobra.Command, args []string) {
 		ListenHost: listenFlag,
 		Port:       portFlag,
 		PublicIP:   publicIPFlag,
+		PublicDNS:  publicDNSFlag,
 		Bootnodes:  bootnodes,
 		MinerAddr:  minerFlag,
 		PrivKey:    validatorPrivKey,
@@ -240,26 +243,31 @@ func startNode(cmd *cobra.Command, args []string) {
 
 	<-stop // Block here until signal received
 
-	fmt.Println("\n⚠️  Ricevuto segnale di stop. Chiusura in corso...")
+	fmt.Println("\n⚠️  Stop signal received. Shutting down...")
 
 	// 1. Close P2P Host (Network)
 	if err := server.Host.Close(); err != nil {
-		fmt.Printf("Errore chiusura Host P2P: %s\n", err)
+		fmt.Printf("Error closing P2P Host: %s\n", err)
 	}
 
 	// 2. Close Database (Persistence)
 	// Important: This releases the LOCK file
 	if err := server.Blockchain.Database.Close(); err != nil {
-		fmt.Printf("Errore chiusura Database: %s\n", err)
+		fmt.Printf("Error closing Database: %s\n", err)
 	}
 
-	fmt.Println("✅ Nodo chiuso correttamente. A presto!")
+	fmt.Println("✅ Node shut down correctly. See you soon!")
 }
 
 func runInit(cmd *cobra.Command, args []string) {
+	if DBExists() {
+		fmt.Println("⚠️  Blockchain already exists. Use './sole-cli startnode' to start.")
+		return
+	}
+
 	chain, err := InitBlockchain()
 	if err != nil {
-		fmt.Println("⚠️  La blockchain esiste già. Usa './sole-cli startnode' per avviare.")
+		fmt.Printf("⚠️  Error initializing blockchain: %s\n", err)
 		return
 	}
 	defer chain.Database.Close()
@@ -268,11 +276,11 @@ func runInit(cmd *cobra.Command, args []string) {
 	UTXOSet := UTXOSet{chain}
 	UTXOSet.Reindex()
 
-	fmt.Println("\n☀️  SOLE Blockchain Inizializzata!")
+	fmt.Println("\n☀️  SOLE Blockchain Initialized!")
 	fmt.Printf("- Genesis Hash: %x\n", chain.LastHash)
 	fmt.Println("- Network: Unisalento Mainnet")
-	fmt.Println("- UTXO Set: Reindicizzato automaticamente.")
-	fmt.Println("- Esegui 'createwallet' o 'startnode'.")
+	fmt.Println("- UTXO Set: Reindexed automatically.")
+	fmt.Println("- Run 'createwallet' or 'startnode'.")
 }
 
 func createWallet(cmd *cobra.Command, args []string) {
@@ -280,12 +288,12 @@ func createWallet(cmd *cobra.Command, args []string) {
 	address := wallets.AddWallet()
 	wallets.SaveToFile()
 
-	fmt.Printf("Nuovo portafoglio creato: %s\n", address)
+	fmt.Printf("New wallet created: %s\n", address)
 }
 
 func getBalance(cmd *cobra.Command, args []string) {
 	if !ValidateAddress(addressFlag) {
-		fmt.Println("⛔ ERRORE: L'indirizzo fornito non è valido.")
+		fmt.Println("⛔ ERROR: Invalid address provided.")
 		os.Exit(1)
 	}
 	chain := ContinueBlockchain(addressFlag)
@@ -301,24 +309,23 @@ func getBalance(cmd *cobra.Command, args []string) {
 		balance += out.Value
 	}
 
-	fmt.Printf("Saldo di '%s': %d Fotoni (%.8f SOLE)\n", addressFlag, balance, float64(balance)/100000000.0)
+	fmt.Printf("Balance of '%s': %d Photons (%.8f SOLE)\n", addressFlag, balance, float64(balance)/100000000.0)
 }
 
 func send(cmd *cobra.Command, args []string) {
 	if !ValidateAddress(fromFlag) {
-		fmt.Println("⛔ ERRORE: L'indirizzo Mitente fornito non è valido.")
+		fmt.Println("⛔ ERROR: Invalid sender address.")
 		os.Exit(1)
 	}
 	if !ValidateAddress(toFlag) {
-		fmt.Println("⛔ ERRORE: L'indirizzo Destinatario fornito non è valido.")
+		fmt.Println("⛔ ERROR: Invalid recipient address.")
 		os.Exit(1)
 	}
 	if amountFlag <= 0 {
-		fmt.Println("⛔ ERRORE: L'importo deve essere maggiore di zero.")
+		fmt.Println("⛔ ERROR: Amount must be greater than zero.")
 		os.Exit(1)
 	}
 
-	// Main logic handling
 	// Main logic handling
 	// Workaround for DB Lock: Create a snapshot copy of the DB
 	snapshotPath := dbPath + "_snapshot_" + strconv.FormatInt(time.Now().UnixNano(), 10)
@@ -333,19 +340,19 @@ func send(cmd *cobra.Command, args []string) {
 	UTXOSet := UTXOSet{chain}
 	defer chain.Database.Close()
 
-	// Conversion: SOLE (Float) -> Fotoni (Int64)
+	// Conversion: SOLE (Float) -> Photons (Int64)
 	amountInt := int64(amountFlag * 100000000)
-	fmt.Printf("💸 Invio in corso: %.8f SOLE (%d Fotoni)\n", amountFlag, amountInt)
+	fmt.Printf("💸 Sending: %.8f SOLE (%d Photons)\n", amountFlag, amountInt)
 
 	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, &UTXOSet)
 
 	if dryRunFlag {
-		fmt.Printf("%x", tx.Serialize())
+		fmt.Printf("Dry-Run: Transaction Hex:\n%x\n", tx.Serialize())
 		return
 	}
 
 	// P2P Injection Logic
-	fmt.Println("Ricerca nodi per inviare la transazione...")
+	fmt.Println("Searching for peers to broadcast transaction...")
 
 	// Panic Recovery
 	defer func() {
@@ -372,7 +379,8 @@ func send(cmd *cobra.Command, args []string) {
 	}
 
 	// Wait for connection and send
-	fmt.Println("In attesa di connessione a un peer...")
+	// Wait for connection and send
+	fmt.Println("Waiting for connection...")
 	found := false
 	timeout := time.After(10 * time.Second)
 	ticker := time.NewTicker(1 * time.Second)
@@ -382,7 +390,7 @@ func send(cmd *cobra.Command, args []string) {
 	for {
 		select {
 		case <-timeout:
-			fmt.Println("⏰ Timeout: Nessun peer trovato in 10 secondi. Assicurati che un nodo sia attivo.")
+			fmt.Println("⏰ Timeout: No peers found within 10 seconds. Is a node running?")
 			return
 		case <-ticker.C:
 			peers := h.Network().Peers()
@@ -390,7 +398,7 @@ func send(cmd *cobra.Command, args []string) {
 				targetPeer := peers[0]
 				// Avoid self? (Though CLI has different ID than Node usually, unless sharing key)
 
-				fmt.Printf("Invio transazione a %s\n", targetPeer.String())
+				fmt.Printf("Sending transaction to %s\n", targetPeer.String())
 
 				// Serialize and Send
 				data := TxMsg{h.ID().String(), tx.Serialize()}
@@ -399,20 +407,20 @@ func send(cmd *cobra.Command, args []string) {
 
 				stream, err := h.NewStream(ctx, targetPeer, protocolID)
 				if err != nil {
-					fmt.Printf("⚠️  Errore apertura stream: %s\n", err)
+					fmt.Printf("⚠️  Error opening stream: %s\n", err)
 					continue
 				}
 
 				_, err = stream.Write(request)
 				if err != nil {
-					fmt.Printf("⚠️  Errore invio dati: %s\n", err)
+					fmt.Printf("⚠️  Error sending data: %s\n", err)
 					stream.Close()
 					continue
 				}
 				time.Sleep(500 * time.Millisecond) // Wait for write flush
 				stream.Close()
 
-				fmt.Println("✅ Transazione inviata con successo!")
+				fmt.Println("✅ Transaction sent successfully!")
 				found = true
 				goto END_LOOP
 			}
@@ -421,7 +429,7 @@ func send(cmd *cobra.Command, args []string) {
 
 END_LOOP:
 	if !found {
-		fmt.Println("Errore: Nessun peer trovato per inviare la transazione.")
+		fmt.Println("Error: No peers found to broadcast transaction.")
 	}
 }
 
@@ -434,12 +442,12 @@ func printChain(cmd *cobra.Command, args []string) {
 	for {
 		block := iter.Next()
 
-		fmt.Printf("=== Blocco %d ===\n", block.Height)
+		fmt.Printf("=== Block %d ===\n", block.Height)
 		fmt.Printf("Hash: %x\n", block.Hash)
 		fmt.Printf("Prev. Hash: %x\n", block.PrevBlockHash)
 		pow := true // No PoW validation implemented properly yet, just flag
 		fmt.Printf("PoA Valid: %s\n", strconv.FormatBool(pow))
-		fmt.Println("Transazioni:")
+		fmt.Println("Transactions:")
 		for _, tx := range block.Transactions {
 			fmt.Printf("  TX ID: %x\n", tx.ID)
 		}
@@ -453,7 +461,7 @@ func printChain(cmd *cobra.Command, args []string) {
 
 func printWallet(cmd *cobra.Command, args []string) {
 	if !ValidateAddress(addressFlag) {
-		log.Panic("Errore: Indirizzo non valido")
+		log.Panic("Error: Invalid Address")
 	}
 
 	wallets, err := CreateWallets()
@@ -463,7 +471,7 @@ func printWallet(cmd *cobra.Command, args []string) {
 
 	wallet := wallets.GetWalletRef(addressFlag)
 	if wallet == nil {
-		log.Panic("Errore: Wallet non trovato per questo indirizzo")
+		log.Panic("Error: Wallet not found for this address")
 	}
 
 	privKey := wallet.GetPrivateKey()
@@ -482,7 +490,7 @@ func listAddresses(cmd *cobra.Command, args []string) {
 	wallets, err := CreateWallets()
 	if err != nil {
 		if os.IsNotExist(err) {
-			fmt.Println("Nessun portafoglio trovato.")
+			fmt.Println("No wallets found.")
 			return
 		}
 		log.Panic(err)
@@ -504,5 +512,5 @@ func reindexUTXO(cmd *cobra.Command, args []string) {
 	UTXOSet.Reindex()
 
 	count := UTXOSet.CountTransactions()
-	fmt.Printf("✅ Reincizzazione completata! Ci sono %d transazioni nell'insieme UTXO.\n", count)
+	fmt.Printf("✅ Reindexing completed! There are %d transactions in the UTXO set.\n", count)
 }
