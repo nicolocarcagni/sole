@@ -39,6 +39,7 @@ var (
 	publicDNSFlag string // Announce Domain (node.sole.com)
 	bootnodesFlag string // Comma-separated bootnodes
 	apiListenFlag string // API Bind Address (0.0.0.0)
+	privKeyFlag   string // Private Key Hex for import
 )
 
 func Execute() {
@@ -71,6 +72,16 @@ func init() {
 		Run:   createWallet,
 	}
 	rootCmd.AddCommand(createWalletCmd)
+
+	// importwallet
+	var importWalletCmd = &cobra.Command{
+		Use:   "importwallet",
+		Short: "Imports a wallet from a Hex Private Key",
+		Run:   runImportWallet,
+	}
+	importWalletCmd.Flags().StringVar(&privKeyFlag, "privkey", "", "Private Key in Hex format")
+	importWalletCmd.MarkFlagRequired("privkey")
+	rootCmd.AddCommand(importWalletCmd)
 
 	// getbalance
 	// getbalance
@@ -289,6 +300,18 @@ func createWallet(cmd *cobra.Command, args []string) {
 	wallets.SaveToFile()
 
 	fmt.Printf("New wallet created: %s\n", address)
+}
+
+func runImportWallet(cmd *cobra.Command, args []string) {
+	wallets, _ := CreateWallets()
+	address, err := wallets.ImportWallet(privKeyFlag)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	wallets.SaveToFile()
+
+	fmt.Printf("Success! Wallet imported. Address: %s\n", address)
 }
 
 func getBalance(cmd *cobra.Command, args []string) {

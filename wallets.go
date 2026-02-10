@@ -37,6 +37,19 @@ func (ws *Wallets) AddWallet() string {
 	return address
 }
 
+// ImportWallet adds a Wallet from a private key hex string
+func (ws *Wallets) ImportWallet(privKeyHex string) (string, error) {
+	wallet, err := MakeWalletFromPrivKeyHex(privKeyHex)
+	if err != nil {
+		return "", err
+	}
+
+	address := fmt.Sprintf("%s", wallet.GetAddress())
+	ws.Wallets[address] = wallet
+
+	return address, nil
+}
+
 // GetWallet returns a Wallet by its address
 func (ws *Wallets) GetWallet(address string) Wallet {
 	return *ws.Wallets[address]

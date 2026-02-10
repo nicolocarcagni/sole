@@ -7,7 +7,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"log"
+	"math/big"
 
 	"golang.org/x/crypto/ripemd160"
 )
@@ -30,6 +32,40 @@ func NewWallet() *Wallet {
 
 	wallet := Wallet{encodedPrivate, public}
 	return &wallet
+}
+
+// MakeWalletFromPrivKeyHex creates a Wallet from a hex string private key
+func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
+	// 1. Decode Hex
+	privKeyBytes, err := hex.DecodeString(privKeyHex)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. Reconstruct ecdsa.PrivateKey
+	curve := elliptic.P256()
+	privKey := new(ecdsa.PrivateKey)
+	privKey.D = new(big.Int).SetBytes(privKeyBytes)
+	privKey.PublicKey.Curve = curve
+	privKey.PublicKey.X, privKey.PublicKey.Y = curve.ScalarBaseMult(privKeyBytes)
+
+	// 3. Encode Private Key for storage (x509)
+	encodedPrivate, err := x509.MarshalECPrivateKey(privKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// 4. Construct Public Key Bytes (for Address generation)
+	// (Same logic as newKeyPair: append X and Y)
+	pubKeyX := make([]byte, 32)
+	pubKeyY := make([]byte, 32)
+	privKey.PublicKey.X.FillBytes(pubKeyX)
+	privKey.PublicKey.Y.FillBytes(pubKeyY)
+	pubKey := append(pubKeyX, pubKeyY...)
+
+	// 5. Return Wallet
+	wallet := Wallet{encodedPrivate, pubKey}
+	return &wallet, nil
 }
 
 // GetAddress returns wallet address
