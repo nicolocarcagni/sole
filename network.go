@@ -33,7 +33,7 @@ const (
 var (
 	commandLength    = 12
 	DefaultBootnodes = []string{
-		"/dns4/sole.nicolocarcagni.dev/tcp/3000/p2p/12D3KooWCcdQbeABiMELv92S7XrtMZzzb7ZG6wrmQBhVm8JJR4t1",
+		"/dns4/sole.nicolocarcagni.dev/tcp/3000/p2p/12D3KooWEtsfPSAJjJMueguEWXkK35PmyBSyiUvKCGsAEHPGXFSG",
 	}
 )
 
