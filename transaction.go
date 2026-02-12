@@ -277,15 +277,27 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		txCopy.ID = txCopy.Hash()
 		txCopy.Vin[inID].PubKey = nil
 
+		// 1. Strict Key Check: ANSI X9.62 Uncompressed (65 bytes, 0x04 prefix)
+		if len(vin.PubKey) != 65 {
+			fmt.Printf("⛔ ERROR: Input %d: Invalid Public Key length: %d (Expected 65)\n", inID, len(vin.PubKey))
+			return false
+		}
+		if vin.PubKey[0] != 0x04 {
+			fmt.Printf("⛔ ERROR: Input %d: Invalid Public Key prefix: 0x%x (Expected 0x04)\n", inID, vin.PubKey[0])
+			return false
+		}
+
 		// Verify ownership: Check if the input signer's key hashes to the output's PubKeyHash
 		signerHash := HashPubKey(vin.PubKey)
 		if !bytes.Equal(signerHash, prevTx.Vout[vin.Vout].PubKeyHash) {
+			fmt.Printf("⛔ ERROR: Input %d: Public Key hash does not match Output's PubKeyHash\n", inID)
 			return false
 		}
 
 		r := big.Int{}
 		s := big.Int{}
 		if len(vin.Signature) != 64 {
+			fmt.Printf("⛔ ERROR: Input %d: Invalid Signature length: %d\n", inID, len(vin.Signature))
 			return false
 		}
 		r.SetBytes(vin.Signature[:32])
@@ -293,14 +305,14 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 
 		x := big.Int{}
 		y := big.Int{}
-		if len(vin.PubKey) != 64 {
-			return false
-		}
-		x.SetBytes(vin.PubKey[:32])
-		y.SetBytes(vin.PubKey[32:])
+		// We already checked len(vin.PubKey) == 65 above.
+		// Uncompressed format: 0x04 + 32 bytes X + 32 bytes Y
+		x.SetBytes(vin.PubKey[1:33])
+		y.SetBytes(vin.PubKey[33:])
 
 		rawPubKey := ecdsa.PublicKey{Curve: curve, X: &x, Y: &y}
 		if !ecdsa.Verify(&rawPubKey, txCopy.ID, &r, &s) {
+			fmt.Printf("⛔ ERROR: Input %d: ECDSA Signature Verification failed\n", inID)
 			return false
 		}
 	}
