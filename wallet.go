@@ -56,12 +56,9 @@ func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
 	}
 
 	// 4. Construct Public Key Bytes (for Address generation)
-	// (Same logic as newKeyPair: append X and Y)
-	pubKeyX := make([]byte, 32)
-	pubKeyY := make([]byte, 32)
-	privKey.PublicKey.X.FillBytes(pubKeyX)
-	privKey.PublicKey.Y.FillBytes(pubKeyY)
-	pubKey := append(pubKeyX, pubKeyY...)
+	// Use elliptic.Marshal to get the uncompressed format (0x04 prefix)
+	// This matches the behavior of vanity.go and standard tools
+	pubKey := elliptic.Marshal(curve, privKey.PublicKey.X, privKey.PublicKey.Y)
 
 	// 5. Return Wallet
 	wallet := Wallet{encodedPrivate, pubKey}
@@ -109,11 +106,8 @@ func newKeyPair() (ecdsa.PrivateKey, []byte) {
 	if err != nil {
 		log.Panic(err)
 	}
-	pubKeyX := make([]byte, 32)
-	pubKeyY := make([]byte, 32)
-	private.PublicKey.X.FillBytes(pubKeyX)
-	private.PublicKey.Y.FillBytes(pubKeyY)
-	pubKey := append(pubKeyX, pubKeyY...)
+	// Use elliptic.Marshal for consistency
+	pubKey := elliptic.Marshal(curve, private.PublicKey.X, private.PublicKey.Y)
 
 	return *private, pubKey
 }

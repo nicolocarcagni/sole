@@ -10,11 +10,11 @@ import (
 )
 
 // AuthorizedValidators contains the hex-encoded public keys of authorized validators
-// Each entry is 128 hex characters (64 bytes = 32 bytes X + 32 bytes Y)
+// Each entry is 130 hex characters (65 bytes = 1 byte Prefix [0x04] + 32 bytes X + 32 bytes Y)
 var AuthorizedValidators = []string{
-	"033cc6d258184de4a0dfd8a29419074c6dccfe97753344467e3713a8c27c9aa260e9017e76ae34208eb768237ddec480d80f0f7e81c53ce27ccb3073eee37a84", // Rettore
-	"5b28a2d412b9fa6dba48f89c42e63478c81d8539a3e65293418f8ec8ef09b6f5d615b4432ff4b3e0cfa9e110d1c1ad21f4a5592bbd6b3701721647eccdf2b3a9", // Mensa
-	"31b27f9828e1ae5ec364277bf690bdfb8eaa184d289c336cd7471dfb0e9b8d6de640e54fa5ff649597dfe9f79502a92fccc21e071d627f1587f8f0e5d872e4f0", // Ingegneria
+	"0499962080b1c07db1ecb7f2d58978203dfe5eede8e648c3755afed392fec7716d8c7a0fe455d15d64b8dd1363d60c78926e9dce4aad2e08a0006cd50215cb87c3", // Foundation
+	"046b936a4fc7f0ed3d37eaeb5f95b7cac901c6a3b6c4bbd377fbefa525812a8cc2918d738d3ba24ba5b5368ed6a91f23bda663c9763f8969880df5c9af5451bf4d",
+	"04d6e939245ddd571c20a585020507ec829384a02a27b0d3f3279d44a21d855c49f58644e95ada1046f14999e0e6be831d25b58eae7bfcfba3ba01643a5b771879",
 	// Example: "deadbeef..."
 }
 
