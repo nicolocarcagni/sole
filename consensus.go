@@ -71,22 +71,41 @@ func VerifyBlockSignature(block *Block) bool {
 		fmt.Printf("PoA: Invalid signature length. Expected 64, Got %d\n", len(block.Signature))
 		return false
 	}
-	if len(block.Validator) != 64 {
-		fmt.Println("PoA: Invalid validator length")
+
+	// PATCH: Handle both Raw (64 bytes) and Standard (65 bytes) Public Keys
+	var pubKeyBytes []byte
+	var x, y *big.Int
+
+	if len(block.Validator) == 64 {
+		// Log detection of old format (optional but helpful)
+		// fmt.Println("PoA: Detected Raw Public Key (64 bytes). Normalizing...")
+
+		// Normalize to Standard Format (Prefix 0x04)
+		pubKeyBytes = append([]byte{0x04}, block.Validator...)
+		x = new(big.Int).SetBytes(block.Validator[:32])
+		y = new(big.Int).SetBytes(block.Validator[32:])
+	} else if len(block.Validator) == 65 {
+		if block.Validator[0] != 0x04 {
+			fmt.Printf("PoA: Invalid Standard Key Prefix. Expected 0x04, Got 0x%x\n", block.Validator[0])
+			return false
+		}
+		pubKeyBytes = block.Validator
+		x = new(big.Int).SetBytes(block.Validator[1:33])
+		y = new(big.Int).SetBytes(block.Validator[33:])
+	} else {
+		fmt.Printf("PoA: Invalid validator length. Expected 64 or 65, Got %d\n", len(block.Validator))
 		return false
 	}
 
-	// Check if validator is authorized
-	validatorHex := hex.EncodeToString(block.Validator)
+	// Check if validator is authorized using the NORMALIZED (Standard) Hex string
+	validatorHex := hex.EncodeToString(pubKeyBytes)
 	if !IsAuthorizedValidator(validatorHex) {
-		fmt.Printf("PoA: Validator %s is not authorized\n", validatorHex[:16]+"...")
+		fmt.Printf("PoA: Validator %s... is not authorized\n", validatorHex[:16])
 		return false
 	}
 
 	// Reconstruct public key from Validator bytes
 	curve := elliptic.P256()
-	x := new(big.Int).SetBytes(block.Validator[:32])
-	y := new(big.Int).SetBytes(block.Validator[32:])
 	pubKey := ecdsa.PublicKey{Curve: curve, X: x, Y: y}
 
 	// Extract R and S from signature (fixed 32 bytes each)
