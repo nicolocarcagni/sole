@@ -73,6 +73,16 @@ func init() {
 	}
 	rootCmd.AddCommand(createWalletCmd)
 
+	// removewallet
+	var removeWalletCmd = &cobra.Command{
+		Use:   "removewallet",
+		Short: "Removes a wallet from the wallet file",
+		Run:   runRemoveWallet,
+	}
+	removeWalletCmd.Flags().StringVar(&addressFlag, "address", "", "Address of the wallet to remove")
+	removeWalletCmd.MarkFlagRequired("address")
+	rootCmd.AddCommand(removeWalletCmd)
+
 	// importwallet
 	var importWalletCmd = &cobra.Command{
 		Use:   "importwallet",
@@ -312,6 +322,44 @@ func runImportWallet(cmd *cobra.Command, args []string) {
 	wallets.SaveToFile()
 
 	fmt.Printf("Success! Wallet imported. Address: %s\n", address)
+}
+
+func runRemoveWallet(cmd *cobra.Command, args []string) {
+	if !ValidateAddress(addressFlag) {
+		fmt.Println("⛔ ERROR: Invalid address provided.")
+		os.Exit(1)
+	}
+
+	wallets, err := CreateWallets()
+	if err != nil {
+		log.Panic(err)
+	}
+
+	// Check existence before prompt
+	if wallets.GetWalletRef(addressFlag) == nil {
+		fmt.Println("❌ Error: Address not found in wallet file.")
+		os.Exit(1)
+	}
+
+	// Confirmation Prompt
+	fmt.Printf("⚠️  Are you sure you want to remove wallet %s? [y/N]: ", addressFlag)
+	var response string
+	fmt.Scanln(&response)
+
+	if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+		fmt.Println("Operation cancelled.")
+		return
+	}
+
+	err = wallets.RemoveWallet(addressFlag)
+	if err != nil {
+		fmt.Println("❌ Error:", err)
+		os.Exit(1)
+	}
+
+	wallets.SaveToFile()
+
+	fmt.Printf("✅ Wallet %s removed successfully.\n", addressFlag)
 }
 
 func getBalance(cmd *cobra.Command, args []string) {

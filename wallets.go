@@ -50,6 +50,16 @@ func (ws *Wallets) ImportWallet(privKeyHex string) (string, error) {
 	return address, nil
 }
 
+// RemoveWallet removes a Wallet by address
+func (ws *Wallets) RemoveWallet(address string) error {
+	if _, ok := ws.Wallets[address]; !ok {
+		return fmt.Errorf("Address not found in wallet file")
+	}
+
+	delete(ws.Wallets, address)
+	return nil
+}
+
 // GetWallet returns a Wallet by its address
 func (ws *Wallets) GetWallet(address string) Wallet {
 	return *ws.Wallets[address]
