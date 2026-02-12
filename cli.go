@@ -56,118 +56,141 @@ func Execute() {
 }
 
 func init() {
-	// createblockchain
-	// init (formerly createblockchain)
-	var initCmd = &cobra.Command{
+	// --- WALLET COMMANDS ---
+	var walletCmd = &cobra.Command{
+		Use:   "wallet",
+		Short: "Manage wallets",
+	}
+	rootCmd.AddCommand(walletCmd)
+
+	var walletCreateCmd = &cobra.Command{
+		Use:   "create",
+		Short: "Create a new wallet",
+		Run:   createWallet,
+	}
+	walletCmd.AddCommand(walletCreateCmd)
+
+	var walletListCmd = &cobra.Command{
+		Use:   "list",
+		Short: "Lists all addresses in the local wallet file",
+		Run:   listAddresses,
+	}
+	walletCmd.AddCommand(walletListCmd)
+
+	var walletImportCmd = &cobra.Command{
+		Use:   "import",
+		Short: "Imports a wallet from a Hex Private Key",
+		Run:   runImportWallet,
+	}
+	// Changed flag from 'privkey' to 'key' as requested
+	walletImportCmd.Flags().StringVar(&privKeyFlag, "key", "", "Private Key in Hex format")
+	walletImportCmd.MarkFlagRequired("key")
+	walletCmd.AddCommand(walletImportCmd)
+
+	var walletRemoveCmd = &cobra.Command{
+		Use:   "remove",
+		Short: "Removes a wallet from a wallet file",
+		Run:   runRemoveWallet,
+	}
+	walletRemoveCmd.Flags().StringVar(&addressFlag, "address", "", "Address of the wallet to remove")
+	walletRemoveCmd.MarkFlagRequired("address")
+	walletCmd.AddCommand(walletRemoveCmd)
+
+	var walletBalanceCmd = &cobra.Command{
+		Use:   "balance",
+		Short: "Get balance of an address",
+		Run:   getBalance,
+	}
+	walletBalanceCmd.Flags().StringVar(&addressFlag, "address", "", "Address to check balance for")
+	walletBalanceCmd.MarkFlagRequired("address")
+	walletCmd.AddCommand(walletBalanceCmd)
+
+	var walletExportCmd = &cobra.Command{
+		Use:   "export",
+		Short: "Print wallet details (Private Key)",
+		Run:   printWallet,
+	}
+	walletExportCmd.Flags().StringVar(&addressFlag, "address", "", "Address to print")
+	walletExportCmd.MarkFlagRequired("address")
+	walletCmd.AddCommand(walletExportCmd)
+
+	// --- CHAIN COMMANDS ---
+	var chainCmd = &cobra.Command{
+		Use:   "chain",
+		Short: "Manage blockchain database",
+	}
+	rootCmd.AddCommand(chainCmd)
+
+	var chainInitCmd = &cobra.Command{
 		Use:   "init",
 		Short: "Initializes the local database with the Official Genesis Block.",
 		Run:   runInit,
 	}
-	rootCmd.AddCommand(initCmd)
+	chainCmd.AddCommand(chainInitCmd)
 
-	// createwallet
-	var createWalletCmd = &cobra.Command{
-		Use:   "createwallet",
-		Short: "Create a new wallet",
-		Run:   createWallet,
-	}
-	rootCmd.AddCommand(createWalletCmd)
-
-	// removewallet
-	var removeWalletCmd = &cobra.Command{
-		Use:   "removewallet",
-		Short: "Removes a wallet from the wallet file",
-		Run:   runRemoveWallet,
-	}
-	removeWalletCmd.Flags().StringVar(&addressFlag, "address", "", "Address of the wallet to remove")
-	removeWalletCmd.MarkFlagRequired("address")
-	rootCmd.AddCommand(removeWalletCmd)
-
-	// importwallet
-	var importWalletCmd = &cobra.Command{
-		Use:   "importwallet",
-		Short: "Imports a wallet from a Hex Private Key",
-		Run:   runImportWallet,
-	}
-	importWalletCmd.Flags().StringVar(&privKeyFlag, "privkey", "", "Private Key in Hex format")
-	importWalletCmd.MarkFlagRequired("privkey")
-	rootCmd.AddCommand(importWalletCmd)
-
-	// getbalance
-	// getbalance
-	var getBalanceCmd = &cobra.Command{
-		Use:   "getbalance",
-		Short: "Get balance of an address",
-		Run:   getBalance,
-	}
-	getBalanceCmd.Flags().StringVar(&addressFlag, "address", "", "Address to check balance for")
-	getBalanceCmd.MarkFlagRequired("address")
-	rootCmd.AddCommand(getBalanceCmd)
-
-	// printwallet
-	var printWalletCmd = &cobra.Command{
-		Use:   "printwallet",
-		Short: "Print wallet details (Private Key)",
-		Run:   printWallet,
-	}
-	printWalletCmd.Flags().StringVar(&addressFlag, "address", "", "Address to print")
-	printWalletCmd.MarkFlagRequired("address")
-	rootCmd.AddCommand(printWalletCmd)
-
-	// listaddresses
-	var listAddressesCmd = &cobra.Command{
-		Use:   "listaddresses",
-		Short: "Lists all addresses in the local wallet file",
-		Run:   listAddresses,
-	}
-	rootCmd.AddCommand(listAddressesCmd)
-
-	// send
-	var sendCmd = &cobra.Command{
-		Use:   "send",
-		Short: "Send amount from one address to another",
-		Run:   send,
-	}
-	sendCmd.Flags().StringVar(&fromFlag, "from", "", "Source address")
-	sendCmd.Flags().StringVar(&toFlag, "to", "", "Destination address")
-	sendCmd.Flags().Float64Var(&amountFlag, "amount", 0, "Amount to send")
-	sendCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Print transaction hex without sending")
-	sendCmd.MarkFlagRequired("from")
-	sendCmd.MarkFlagRequired("to")
-	sendCmd.MarkFlagRequired("amount")
-	rootCmd.AddCommand(sendCmd)
-
-	// printchain
-	var printChainCmd = &cobra.Command{
-		Use:   "printchain",
-		Short: "Print all blocks in the chain",
-		Run:   printChain,
-	}
-	rootCmd.AddCommand(printChainCmd)
-
-	// startnode
-	var startNodeCmd = &cobra.Command{
-		Use:   "startnode",
-		Short: "Start the P2P node",
-		Run:   startNode,
-	}
-	// reindex
-	var reindexCmd = &cobra.Command{
+	var chainReindexCmd = &cobra.Command{
 		Use:   "reindex",
 		Short: "Rebuilds the UTXO set",
 		Run:   reindexUTXO,
 	}
-	rootCmd.AddCommand(reindexCmd)
+	chainCmd.AddCommand(chainReindexCmd)
 
-	startNodeCmd.Flags().IntVar(&portFlag, "port", 3000, "P2P Port")
-	startNodeCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Local Listen IP for P2P")
-	startNodeCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Public IP Address (Announce)")
-	startNodeCmd.Flags().StringVar(&publicDNSFlag, "public-dns", "", "Public Domain Name (Announce)")
-	startNodeCmd.Flags().StringVar(&bootnodesFlag, "bootnodes", "", "Comma-separated list of Bootnodes")
-	startNodeCmd.Flags().StringVar(&minerFlag, "miner", "", "Miner address")
-	startNodeCmd.Flags().IntVar(&apiPortFlag, "api-port", 8080, "API Server Port")
-	startNodeCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Local Listen IP for API")
-	rootCmd.AddCommand(startNodeCmd)
+	var chainPrintCmd = &cobra.Command{
+		Use:   "print",
+		Short: "Print all blocks in the chain",
+		Run:   printChain,
+	}
+	chainCmd.AddCommand(chainPrintCmd)
+
+	var chainResetCmd = &cobra.Command{
+		Use:   "reset",
+		Short: "Resets (DELETES) the blockchain database",
+		Run:   runResetChain,
+	}
+	chainCmd.AddCommand(chainResetCmd)
+
+	// --- NODE COMMANDS ---
+	var nodeCmd = &cobra.Command{
+		Use:   "node",
+		Short: "Manage P2P node",
+	}
+	rootCmd.AddCommand(nodeCmd)
+
+	var nodeStartCmd = &cobra.Command{
+		Use:   "start",
+		Short: "Start the P2P node",
+		Run:   startNode,
+	}
+	nodeStartCmd.Flags().IntVar(&portFlag, "port", 3000, "P2P Port")
+	nodeStartCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Local Listen IP for P2P")
+	nodeStartCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Public IP Address (Announce)")
+	nodeStartCmd.Flags().StringVar(&publicDNSFlag, "public-dns", "", "Public Domain Name (Announce)")
+	nodeStartCmd.Flags().StringVar(&bootnodesFlag, "bootnodes", "", "Comma-separated list of Bootnodes")
+	nodeStartCmd.Flags().StringVar(&minerFlag, "miner", "", "Miner address")
+	nodeStartCmd.Flags().IntVar(&apiPortFlag, "api-port", 8080, "API Server Port")
+	nodeStartCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Local Listen IP for API")
+	nodeCmd.AddCommand(nodeStartCmd)
+
+	// --- TX COMMANDS ---
+	var txCmd = &cobra.Command{
+		Use:   "tx",
+		Short: "Manage transactions",
+	}
+	rootCmd.AddCommand(txCmd)
+
+	var txSendCmd = &cobra.Command{
+		Use:   "send",
+		Short: "Send amount from one address to another",
+		Run:   send,
+	}
+	txSendCmd.Flags().StringVar(&fromFlag, "from", "", "Source address")
+	txSendCmd.Flags().StringVar(&toFlag, "to", "", "Destination address")
+	txSendCmd.Flags().Float64Var(&amountFlag, "amount", 0, "Amount to send")
+	txSendCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Print transaction hex without sending")
+	txSendCmd.MarkFlagRequired("from")
+	txSendCmd.MarkFlagRequired("to")
+	txSendCmd.MarkFlagRequired("amount")
+	txCmd.AddCommand(txSendCmd)
 }
 
 func startNode(cmd *cobra.Command, args []string) {
@@ -582,6 +605,29 @@ func reindexUTXO(cmd *cobra.Command, args []string) {
 	UTXOSet := UTXOSet{chain}
 	UTXOSet.Reindex()
 
+	// Re-add reindexUTXO at end of file if it was cut off, or just append runResetChain
 	count := UTXOSet.CountTransactions()
 	fmt.Printf("✅ Reindexing completed! There are %d transactions in the UTXO set.\n", count)
+}
+
+func runResetChain(cmd *cobra.Command, args []string) {
+	if !DBExists() {
+		fmt.Println("⚠️  No blockchain found to reset.")
+		return
+	}
+
+	fmt.Print("⚠️  Are you sure you want to RESET the chain? This will delete all data! [y/N]: ")
+	var response string
+	fmt.Scanln(&response)
+
+	if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+		fmt.Println("Operation cancelled.")
+		return
+	}
+
+	err := os.RemoveAll(dbPath)
+	if err != nil {
+		log.Panic(err)
+	}
+	fmt.Println("✅ Blockchain database deleted.")
 }
