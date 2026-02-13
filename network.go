@@ -227,10 +227,13 @@ func NewServer(cfg ServerConfig) *Server {
 		go server.Bootstrap(bootnodesToUse)
 	}
 
-	fmt.Printf("│ ☀️  SOLE NODE STARTED (Port: %d)          \t\t\t│\n", cfg.Port)
-	fmt.Printf("│ 🆔 Peer ID: %s\n", h.ID().String())
-	fmt.Println("│                                                               │")
-	fmt.Println("│ 🔗 Listen Addresses (Copy one to other peers):                │")
+	fmt.Println()
+	fmt.Println(ColorGreen + "──────────────────────────────────────────────────────────────────────" + ColorReset)
+	fmt.Printf(" ☀️  SOLE NODE STARTED (Port: "+ColorYellow+"%d"+ColorReset+")\n", cfg.Port)
+	fmt.Printf(" 🆔 Peer ID: "+ColorCyan+"%s"+ColorReset+"\n", h.ID().String())
+	fmt.Println(ColorGreen + "──────────────────────────────────────────────────────────────────────" + ColorReset)
+	fmt.Println()
+	fmt.Println(" 🔗 Listen Addresses:")
 
 	for _, addr := range h.Addrs() {
 		// Construct full multiaddr: /ip4/x.x.x.x/tcp/3000/p2p/Qm...
@@ -238,9 +241,9 @@ func NewServer(cfg ServerConfig) *Server {
 
 		// Visual emphasis for public/LAN IPs
 		if strings.Contains(fullAddr, "/127.0.0.1/") {
-			fmt.Printf("│    (Local)    %s\n", fullAddr)
+			fmt.Printf("   "+ColorYellow+"(Local)"+ColorReset+"  %s\n", fullAddr)
 		} else {
-			fmt.Printf("│  👉(Public)   %s\n", fullAddr)
+			fmt.Printf("   "+ColorGreen+"👉(Public)"+ColorReset+" %s\n", fullAddr)
 		}
 	}
 	return server
