@@ -41,7 +41,7 @@ To join the main network immediately (Zero-Config):
 
 ```bash
 ./sole-cli init
-./sole-cli startnode
+./sole-cli node start
 ```
 
 The node will automatically:
@@ -59,7 +59,7 @@ The `sole-cli` tool manages all aspects of the node and wallet.
 
 ```bash
 # Create a new wallet address and keypair
-./sole-cli createwallet
+./sole-cli wallet create
 
 # Check the balance of an address
 ./sole-cli getbalance --address <ADDRESS>
@@ -78,7 +78,7 @@ Send tokens (SOLE) to another address.
 If you hold a validator key, you can start the node in mining mode:
 
 ```bash
-./sole-cli startnode --miner <VALIDATOR_ADDRESS>
+./sole-cli node start --miner <VALIDATOR_ADDRESS>
 ```
 
 ---

@@ -227,15 +227,11 @@ func NewServer(cfg ServerConfig) *Server {
 		go server.Bootstrap(bootnodesToUse)
 	}
 
-	// --- PRETTY STARTUP SUMMARY ---
-	fmt.Println("\n┌───────────────────────────────────────────────────────────────┐")
 	fmt.Printf("│ ☀️  SOLE NODE STARTED (Port: %d)          \t\t\t│\n", cfg.Port)
-	fmt.Println("├───────────────────────────────────────────────────────────────┤")
 	fmt.Printf("│ 🆔 Peer ID: %s\n", h.ID().String())
 	fmt.Println("│                                                               │")
 	fmt.Println("│ 🔗 Listen Addresses (Copy one to other peers):                │")
 
-	hasPublic := false
 	for _, addr := range h.Addrs() {
 		// Construct full multiaddr: /ip4/x.x.x.x/tcp/3000/p2p/Qm...
 		fullAddr := fmt.Sprintf("%s/p2p/%s", addr, h.ID().String())
@@ -245,23 +241,8 @@ func NewServer(cfg ServerConfig) *Server {
 			fmt.Printf("│    (Local)    %s\n", fullAddr)
 		} else {
 			fmt.Printf("│  👉(Public)   %s\n", fullAddr)
-			hasPublic = true
 		}
 	}
-
-	if cfg.PublicIP != "" && !hasPublic {
-		// If PublicIP is set but not in Addrs (e.g. behind NAT and not yet recognized by libp2p), force display
-		// Note: libp2p.AddrsFactory should have added it, but just in case.
-		// Actually, depending on config, it might show up in h.Addrs() or not immediately.
-		// Let's construct it manually if we asked for it.
-		// But usually h.Addrs() is correct.
-
-		// If we are forcing public IP we might want to explicitly show the constructed one if missing
-		// For now we trust h.Addrs() as we injected the factory.
-	}
-
-	fmt.Println("└───────────────────────────────────────────────────────────────┘")
-
 	return server
 }
 

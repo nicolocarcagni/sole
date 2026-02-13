@@ -11,11 +11,22 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/spf13/cobra"
+)
+
+// ANSI Colors
+const (
+	ColorGreen  = "\033[32m"
+	ColorYellow = "\033[33m"
+	ColorCyan   = "\033[36m"
+	ColorReset  = "\033[0m"
+	ColorBold   = "\033[1m"
+	ColorRed    = "\033[31m"
 )
 
 var rootCmd = &cobra.Command{
@@ -43,6 +54,13 @@ var (
 )
 
 func Execute() {
+	// Custom Help
+	rootCmd.SetHelpFunc(printUsage)
+	rootCmd.SetUsageFunc(func(cmd *cobra.Command) error {
+		printUsage(cmd, nil)
+		return nil
+	})
+
 	// Default to Help if no args provided
 	if len(os.Args) < 2 {
 		rootCmd.Help()
@@ -53,6 +71,59 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func printUsage(cmd *cobra.Command, args []string) {
+	fmt.Println(ColorGreen + `
+   _____  ____  _      ______ 
+  / ____|/ __ \| |    |  ____|
+ | (___ | |  | | |    | |__   
+  \___ \| |  | | |    |  __|  
+  ____) | |__| | |____| |____ 
+ |_____/ \____/|______|______|
+` + ColorReset)
+	fmt.Println(ColorBold + "   SOLE Blockchain CLI v1.0" + ColorReset)
+	fmt.Println("   (c) 2026 Università del Salento")
+	fmt.Println()
+
+	fmt.Println(ColorBold + "USAGE:" + ColorReset)
+	fmt.Println("  ./sole-cli <resource> <action> [flags]")
+	fmt.Println()
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 4, ' ', 0)
+
+	// 1. WALLET
+	fmt.Fprintln(w, ColorYellow+"1. WALLET MANAGEMENT (wallet)"+ColorReset)
+	fmt.Fprintln(w, "  "+ColorGreen+"create"+ColorReset+"\tGenerates a new keypair.")
+	fmt.Fprintln(w, "  "+ColorGreen+"list"+ColorReset+"\tLists saved addresses.")
+	fmt.Fprintln(w, "  "+ColorGreen+"import"+ColorReset+"\tImports a private key (--key <HEX>).")
+	fmt.Fprintln(w, "  "+ColorGreen+"remove"+ColorReset+"\tRemoves a wallet (--address <ADDR>).")
+	fmt.Fprintln(w, "  "+ColorGreen+"balance"+ColorReset+"\tChecks balance of an address (--address <ADDR>).")
+	fmt.Fprintln(w, "  "+ColorGreen+"export"+ColorReset+"\tExports private key (--address <ADDR>).")
+	fmt.Fprintln(w, "")
+
+	// 2. CHAIN
+	fmt.Fprintln(w, ColorYellow+"2. BLOCKCHAIN OPERATIONS (chain)"+ColorReset)
+	fmt.Fprintln(w, "  "+ColorGreen+"init"+ColorReset+"\tInitializes the Genesis Block and DB.")
+	fmt.Fprintln(w, "  "+ColorGreen+"reindex"+ColorReset+"\tRebuilds the UTXO index.")
+	fmt.Fprintln(w, "  "+ColorGreen+"print"+ColorReset+"\tPrints all blocks in the chain.")
+	fmt.Fprintln(w, "  "+ColorGreen+"reset"+ColorReset+"\t"+ColorRed+"DELETES"+ColorReset+" the blockchain database.")
+	fmt.Fprintln(w, "")
+
+	// 3. NODE
+	fmt.Fprintln(w, ColorYellow+"3. NODE & NETWORK (node)"+ColorReset)
+	fmt.Fprintln(w, "  "+ColorGreen+"start"+ColorReset+"\tStarts the P2P node and Miner.")
+	fmt.Fprintln(w, "\t"+ColorCyan+"Flags:"+ColorReset+" --port, --miner, --bootnodes, --public-ip")
+	fmt.Fprintln(w, "")
+
+	// 4. TX
+	fmt.Fprintln(w, ColorYellow+"4. TRANSACTIONS (tx)"+ColorReset)
+	fmt.Fprintln(w, "  "+ColorGreen+"send"+ColorReset+"\tSends funds between wallets.")
+	fmt.Fprintln(w, "\t"+ColorCyan+"Flags:"+ColorReset+" --from, --to, --amount, --dry-run")
+	fmt.Fprintln(w, "")
+
+	w.Flush()
+	fmt.Println()
 }
 
 func init() {
@@ -198,7 +269,7 @@ func startNode(cmd *cobra.Command, args []string) {
 
 	// Check DB existence if not mining (or even if mining, usually need DB)
 	// But ContinueBlockchain inside StartServer or Network will handle it?
-	// The request asked for check in startnode.
+	// The request asked for check in node start.
 	if !DBExists() {
 		fmt.Println("⚠️  Database not found. Did you run './sole-cli init'?")
 		os.Exit(1)
@@ -305,7 +376,7 @@ func startNode(cmd *cobra.Command, args []string) {
 
 func runInit(cmd *cobra.Command, args []string) {
 	if DBExists() {
-		fmt.Println("⚠️  Blockchain already exists. Use './sole-cli startnode' to start.")
+		fmt.Println("⚠️  Blockchain already exists. Use './sole-cli node start' to start.")
 		return
 	}
 
@@ -324,7 +395,7 @@ func runInit(cmd *cobra.Command, args []string) {
 	fmt.Printf("- Genesis Hash: %x\n", chain.LastHash)
 	fmt.Println("- Network: Unisalento Mainnet")
 	fmt.Println("- UTXO Set: Reindexed automatically.")
-	fmt.Println("- Run 'createwallet' or 'startnode'.")
+	fmt.Println("- Run 'wallet create' or 'node start'.")
 }
 
 func createWallet(cmd *cobra.Command, args []string) {
