@@ -62,7 +62,7 @@ The `sole-cli` tool manages all aspects of the node and wallet.
 ./sole-cli wallet create
 
 # Check the balance of an address
-./sole-cli getbalance --address <ADDRESS>
+./sole-cli wallet balance --address <ADDRESS>
 ```
 
 ### Transactions
@@ -70,7 +70,7 @@ The `sole-cli` tool manages all aspects of the node and wallet.
 Send tokens (SOLE) to another address.
 
 ```bash
-./sole-cli send --from <SENDER> --to <RECEIVER> --amount <VALUE>
+./sole-cli tx send --from <SENDER> --to <RECEIVER> --amount <VALUE>
 ```
 
 ### Mining (Validators Only)
