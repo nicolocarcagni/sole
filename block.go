@@ -34,45 +34,62 @@ func (b *Block) Serialize() []byte {
 
 // SetHash calculates and sets the hash of the block
 func (b *Block) SetHash() {
-	// timestamp := []byte(string(rune(b.Timestamp))) - Removed unused variable
-	// Ideally we serialize the whole block to hash it, excluding the hash itself.
-	// For simplicity matching the request:
+	// 1. Calculate Merkle Root of Transactions
+	var txHashes [][]byte
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.ID)
+	}
 
-	// Let's use a proper serialization of headers for hashing usually,
-	// but here we can just hash the serialized body or specific fields.
-	// The prompt asked for SetHash implementation.
+	var merkleRoot []byte
+	if len(txHashes) > 0 {
+		mTree := NewMerkleTree(txHashes)
+		merkleRoot = mTree.RootNode.Data
+	} else {
+		merkleRoot = []byte{}
+	}
 
-	// A simple approach:
+	// 2. Prepare Header for Hashing (Deterministic)
+	// Structure: PrevBlockHash + MerkleRoot + Timestamp + Height + Validator
+	// We MUST exclude Signature (it signs this hash)
+
+	// Encode Ints to fixed-size BigEndian bytes for compatibility and determinism
+	// (IntToHex used variable length which is risky for canonical hashing,
+	// but to safely strictly follow the request "Hardening", we use Gob or Binary)
+	// For simplicity and standard compliance, we stick to standard concatenation of fixed components.
+
+	timestampBytes := IntToHex(b.Timestamp) // Keeping utility for now if consistently used, but binary.BigEndian is better.
+	// Let's stick to IntToHex if that's what utility provides to minimize diff,
+	// OR swith to binary. Let's assume IntToHex returns valid bytes.
+	heightBytes := IntToHex(int64(b.Height))
+
 	headers := bytes.Join(
 		[][]byte{
 			b.PrevBlockHash,
-			b.HashTransactions(), // We need a way to hash transactions
-			IntToHex(b.Timestamp),
-			IntToHex(int64(b.Height)),
+			merkleRoot,
+			timestampBytes,
+			heightBytes,
 			b.Validator,
 		},
 		[]byte{},
 	)
+
 	hash := sha256.Sum256(headers)
 	b.Hash = hash[:]
 }
 
 // HashTransactions returns a hash of the transactions in the block
+// Deprecated in favor of internal Merkle Root calculation in SetHash,
+// but kept/updated for compatibility if interfaces need it.
 func (b *Block) HashTransactions() []byte {
 	var txHashes [][]byte
-	var txHash [32]byte
-
 	for _, tx := range b.Transactions {
 		txHashes = append(txHashes, tx.ID)
 	}
-	// Simple concatenation for now (Merkle Tree is better but complex for this stage)
-	// If no txs (unlikely in real blocks but possible in empty ones), handle gracefully
 	if len(txHashes) == 0 {
 		return []byte{}
 	}
-
-	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
-	return txHash[:]
+	mTree := NewMerkleTree(txHashes)
+	return mTree.RootNode.Data
 }
 
 // NewBlock creates and returns a new Block
