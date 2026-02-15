@@ -184,4 +184,3 @@ The SOLE Blockchain successfully demonstrates a working, performant, and secure 
 
 ### Future Developments
 1.  **Dynamic Validator Set**: Moving the validator list from code to on-chain governance (voting).
-2.  **Smart Contracts**: investigating the integration of a lightweight WASM VM.
