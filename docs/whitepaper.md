@@ -153,10 +153,35 @@ The core node runs an HTTP API Server (default port `8080`) enabling external in
 *   **sole-cli**: The native Go command-line tool for node management and wallet operations.
 *   **Python SDK**: An external ecosystem of Python scripts (Wallet, Telegram Bot) that interact with the node via the REST API, demonstrating the platform's interoperability.
 
-## 10. Conclusion & Future Roadmap
+## 10. Core Protocol Updates: Data Integrity & Consensus Hardening
+
+Recent audits of the SOLE Core prompted a significant architectural upgrade to enhance data integrity and consensus security. These changes move the system from a naive educational prototype to a robust, attack-resistant distributed ledger.
+
+### 10.1. Merkle Tree Implementation (Data Integrity)
+In previous versions, transaction integrity was secured by a simple linear concatenation of transaction hashes. While functional for small blocks, this approach failed to support granular verification. The protocol has now migrated to a full **Binary Merkle Tree** structure.
+
+**Technical Rationale:**
+*   **Granular Immutability**: All transactions in a block are hashed in pairs until a single **Merkle Root** is produced. This Root is the only transaction data stored in the Block Header.
+*   **SPV Support**: This architecture now natively supports **Simple Payment Verification (SPV)**. Light clients can verify the inclusion of a specific transaction by downloading only the Block Header and a short **Merkle Path** (logarithmic size $O(\log N)$), rather than the entire block body ($O(N)$).
+*   **Standard Compliance**: The implementation handles odd numbers of nodes by duplicating the last hash, aligning with industry standards (e.g., Bitcoin) to ensure consistent tree construction.
+
+### 10.2. Consensus Hardening: Cryptographic Rate Limiting
+While SOLE retains its identity-based **Proof of Authority (PoA)** consensus, the v1.1 protocol introduces two critical fields to the Block Header: **Nonce** and **Difficulty**.
+
+**Nonce & Difficulty in PoA:**
+Unlike Proof of Work, where difficulty targets a specific block time (e.g., 10 minutes), SOLE employs a *symbolic* difficulty (e.g., Hash must start with `0x00...`).
+1.  **Anti-Spam Mechanism**: By imposing a non-zero computational cost to block forging, the network mitigates Denial of Service (DoS) attacks. A compromised validator key cannot simply flood the network with millions of valid blocks per second; each block requires a verifiable amount of CPU time to produce.
+2.  **Entropy Source**: The `Nonce` ensures that even if a validator re-confirms the exact same set of transactions at the exact same second, the resulting Block Hash will be unique.
+
+### 10.3. Header Integrity & Signature Malleability
+To prevent malleability attacks, the **ECDSA Signature** of the validator is now strictly applied to the **Block Header Hash** (calculated from `PrevHash + MerkleRoot + Timestamp + Height + Nonce`).
+*   **Separation of Concerns**: The signature is excluded from the hash it signs.
+*   **Identity Binding**: This ensures that the validator's cryptographic identity is mathematically bound to the exact content of the block. Any alteration to the header (including the Nonce) invalidates the signature, guaranteeing the chain's authenticity.
+
+## 11. Conclusion & Future Roadmap
 
 The SOLE Blockchain successfully demonstrates a working, performant, and secure distributed ledger for educational use. By leveraging Go, BadgerDB, and Libp2p, it achieves a high level of technical maturity.
 
 ### Future Developments
-1.  **Merkle Trees**: Implementing full Merkle Tree roots for efficient SPV (p-node) verification.
-2.  **Dynamic Validator Set**: Moving the validator list from code to on-chain governance (voting).
+1.  **Dynamic Validator Set**: Moving the validator list from code to on-chain governance (voting).
+2.  **Smart Contracts**: investigating the integration of a lightweight WASM VM.
