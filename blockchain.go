@@ -299,6 +299,9 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 	// Create block without signature first
 	newBlock := NewBlock(transactions, lastHash, newHeight, nil)
 
+	// PoA Hardening: Mine the block (Find valid Nonce)
+	MineBlock(newBlock)
+
 	// Sign the block with validator's private key
 	err = SignBlock(newBlock, privKey)
 	if err != nil {
@@ -330,14 +333,46 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 		return false // Already processed
 	}
 
-	// Verify PoA signature first
+	// 1. PoA Hardening: Strict Header Validation (Time, Drift, Proof)
+	chain.Mux.Lock()
+	defer chain.Mux.Unlock()
+
+	var lastBlock Block
+	err = chain.Database.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte("lh"))
+		if err != nil {
+			return err
+		}
+		lastHash, _ := item.ValueCopy(nil)
+		item, err = txn.Get(lastHash)
+		if err != nil {
+			return err
+		}
+		data, _ := item.ValueCopy(nil)
+		lastBlock = *DeserializeBlock(data)
+		return nil
+	})
+
+	if err == nil {
+		// Only validate against previous block if we can find it (Genesis handling is special case usually, but AddBlock implies appending)
+		if err := ValidateBlockHeader(block, &lastBlock); err != nil {
+			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
+			return false
+		}
+	} else {
+		// If we can't find LH, maybe it's the first block?
+		// If DB is empty, InitBlockchain should be used.
+		// If we are syncing, we might be adding blocks in order.
+		// For now, let's assume we always have a tip.
+	}
+
+	// 2. Verify PoA signature
+	// Note: We already hold the lock, but IsAuthorizedValidator is static. VerifyBlockSignature is stateless.
+	// But it prints to stdout.
 	if !VerifyBlockSignature(block) {
 		fmt.Println("AddBlock: Block rejected - invalid PoA signature")
 		return false
 	}
-
-	chain.Mux.Lock()
-	defer chain.Mux.Unlock()
 
 	err = chain.Database.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get(block.Hash); err == nil {

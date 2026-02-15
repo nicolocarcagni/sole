@@ -41,6 +41,6 @@ func NewGenesisBlock() *Block {
 		Validator:     []byte("Genesis"),
 		Signature:     []byte{}, // No signature for genesis or empty
 	}
-	block.SetHash()
+	MineBlock(block)
 	return block
 }

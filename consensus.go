@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math/big"
+	"time"
 )
 
 // AuthorizedValidators contains the hex-encoded public keys of authorized validators
@@ -125,4 +126,69 @@ func VerifyBlockSignature(block *Block) bool {
 // GetValidatorHex returns the hex-encoded public key for a wallet
 func GetValidatorHex(w Wallet) string {
 	return hex.EncodeToString(w.PublicKey)
+}
+
+// --- PoA Hardening: Temporal Validation & Anti-Spam ---
+
+const (
+	// DriftTolerance is the allowed time difference for block timestamp
+	DriftTolerance = 1 * time.Minute
+	// PoADifficulty is the number of leading zero bits required (symbolic PoW)
+	// For educational efficiency, we use a simple check (e.g., Hash starts with 0x0...)
+	// Here we check if the first N bytes are 0. Let's say 1 byte (buffer[0] == 0) for very easy,
+	// or 2 bytes for harder.
+	// User requested "Starts with at least 1 zero or 4 bit a zero".
+	// Let's require the first 2 hex chars (1 byte) to be 00.
+	TargetZeros = 1 // Leading bytes must be 0x00
+)
+
+// MineBlock performs the "Mining" (finding a valid Nonce)
+func MineBlock(block *Block) {
+	fmt.Printf("⛏️  Mining block %d... ", block.Height)
+	block.Nonce = 0
+
+	for {
+		block.SetHash()
+		// Check difficulty
+		if CheckProofOfWork(block.Hash) {
+			break
+		}
+		block.Nonce++
+	}
+	fmt.Printf("Done! Nonce: %d\n", block.Nonce)
+}
+
+// CheckProofOfWork checks if the hash satisfies the difficulty
+func CheckProofOfWork(hash []byte) bool {
+	// Simple check: First byte must be 0
+	if len(hash) < TargetZeros {
+		return false
+	}
+	for i := 0; i < TargetZeros; i++ {
+		if hash[i] != 0x00 {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateBlockHeader checks strict PoA rules (Timestamp, Drift, Proof)
+func ValidateBlockHeader(block *Block, prevBlock *Block) error {
+	// 1. Monotonic Timestamp
+	if block.Timestamp <= prevBlock.Timestamp {
+		return fmt.Errorf("timestamp is not monotonic (Current: %d, Prev: %d)", block.Timestamp, prevBlock.Timestamp)
+	}
+
+	// 2. Drift Tolerance (Future Check)
+	now := time.Now().Unix()
+	if block.Timestamp > now+int64(DriftTolerance.Seconds()) {
+		return fmt.Errorf("timestamp too far in future (Block: %d, Now: %d, Limit: %d)", block.Timestamp, now, int64(DriftTolerance.Seconds()))
+	}
+
+	// 3. Anti-Spam (Proof of Work)
+	if !CheckProofOfWork(block.Hash) {
+		return fmt.Errorf("invalid PoA Proof-of-Work (Hash: %x)", block.Hash)
+	}
+
+	return nil
 }

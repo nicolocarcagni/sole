@@ -15,6 +15,7 @@ type Block struct {
 	PrevBlockHash []byte
 	Hash          []byte
 	Height        int
+	Nonce         int    // PoA Anti-Spam
 	Validator     []byte // Public key of the block validator (64 bytes)
 	Signature     []byte // ECDSA signature of the block hash (64 bytes)
 }
@@ -49,7 +50,7 @@ func (b *Block) SetHash() {
 	}
 
 	// 2. Prepare Header for Hashing (Deterministic)
-	// Structure: PrevBlockHash + MerkleRoot + Timestamp + Height + Validator
+	// Structure: PrevBlockHash + MerkleRoot + Timestamp + Height + Nonce + Validator
 	// We MUST exclude Signature (it signs this hash)
 
 	// Encode Ints to fixed-size BigEndian bytes for compatibility and determinism
@@ -61,6 +62,7 @@ func (b *Block) SetHash() {
 	// Let's stick to IntToHex if that's what utility provides to minimize diff,
 	// OR swith to binary. Let's assume IntToHex returns valid bytes.
 	heightBytes := IntToHex(int64(b.Height))
+	nonceBytes := IntToHex(int64(b.Nonce))
 
 	headers := bytes.Join(
 		[][]byte{
@@ -68,6 +70,7 @@ func (b *Block) SetHash() {
 			merkleRoot,
 			timestampBytes,
 			heightBytes,
+			nonceBytes,
 			b.Validator,
 		},
 		[]byte{},
@@ -100,6 +103,7 @@ func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int, val
 		PrevBlockHash: prevBlockHash,
 		Hash:          []byte{},
 		Height:        height,
+		Nonce:         0,
 		Validator:     validator,
 	}
 	block.SetHash()
