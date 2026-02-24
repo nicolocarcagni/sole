@@ -83,6 +83,15 @@ func InitBlockchain() (*Blockchain, error) {
 		if err != nil {
 			log.Panic(err)
 		}
+
+		// [OPTIMIZATION] Index transactions for O(1) lookup
+		for _, tx := range genesis.Transactions {
+			err = txn.Set(append([]byte("tx-"), tx.ID...), genesis.Hash)
+			if err != nil {
+				log.Panic(err)
+			}
+		}
+
 		err = txn.Set([]byte("lh"), genesis.Hash)
 		lastHash = genesis.Hash
 		return err
@@ -313,6 +322,15 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 		if err != nil {
 			log.Panic(err)
 		}
+
+		// [OPTIMIZATION] Index transactions for O(1) lookup
+		for _, tx := range newBlock.Transactions {
+			err = txn.Set(append([]byte("tx-"), tx.ID...), newBlock.Hash)
+			if err != nil {
+				log.Panic(err)
+			}
+		}
+
 		err = txn.Set([]byte("lh"), newBlock.Hash)
 		chain.LastHash = newBlock.Hash
 		return err
@@ -374,6 +392,12 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 		return false
 	}
 
+	// New fix: Verify all internal transaction signatures (including intra-block)
+	if !chain.VerifyBlockTransactions(block) {
+		fmt.Println("AddBlock: Block rejected - invalid transaction signatures")
+		return false
+	}
+
 	err = chain.Database.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get(block.Hash); err == nil {
 			return nil
@@ -383,6 +407,14 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 		err := txn.Set(block.Hash, blockData)
 		if err != nil {
 			return err
+		}
+
+		// [OPTIMIZATION] Index transactions for O(1) lookup
+		for _, tx := range block.Transactions {
+			err = txn.Set(append([]byte("tx-"), tx.ID...), block.Hash)
+			if err != nil {
+				return err
+			}
 		}
 
 		item, err := txn.Get([]byte("lh"))
@@ -599,10 +631,33 @@ Work:
 	return accumulated, unspentOutputs
 }
 
-// FindTransaction finds a transaction by ID
+// FindTransaction finds a transaction by ID (Optimized with O(1) Index)
 func (chain *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
-	iter := chain.Iterator()
+	// 1. Try to find using the O(1) Transaction Index
+	var blockHash []byte
+	err := chain.Database.View(func(txn *badger.Txn) error {
+		item, err := txn.Get(append([]byte("tx-"), ID...))
+		if err != nil {
+			return err
+		}
+		blockHash, err = item.ValueCopy(nil)
+		return err
+	})
 
+	if err == nil {
+		// Index hit! Retrieve the specific block
+		block, err := chain.GetBlock(blockHash)
+		if err == nil {
+			for _, tx := range block.Transactions {
+				if bytes.Equal(tx.ID, ID) {
+					return *tx, nil
+				}
+			}
+		}
+	}
+
+	// 2. Fallback to O(N) iteration (for legacy compatibility if DB not reset)
+	iter := chain.Iterator()
 	for {
 		block := iter.Next()
 
@@ -627,7 +682,9 @@ func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateK
 	for _, vin := range tx.Vin {
 		prevTX, err := chain.FindTransaction(vin.Txid)
 		if err != nil {
-			log.Panic(err)
+			// [SECURITY FIX] Do not panic on invalid TxID, prevent DoS.
+			fmt.Printf("⚠️  [SignTransaction] Skipped: Previous transaction not found (%x)\n", vin.Txid)
+			return
 		}
 		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
 	}
@@ -646,12 +703,57 @@ func (chain *Blockchain) VerifyTransaction(tx *Transaction) bool {
 	for _, vin := range tx.Vin {
 		prevTX, err := chain.FindTransaction(vin.Txid)
 		if err != nil {
-			log.Panic(err)
+			// [SECURITY FIX] Stop execution and invalidate transaction gracefully.
+			fmt.Printf("⛔ [VerifyTransaction] Rejected: Parent transaction %x does not exist.\n", vin.Txid)
+			return false
 		}
 		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
 	}
 
 	return tx.Verify(prevTXs)
+}
+
+// VerifyBlockTransactions validates all transaction signatures in a block,
+// correctly handling intra-block dependencies (mempool chaining).
+func (chain *Blockchain) VerifyBlockTransactions(block *Block) bool {
+	// 1. Build a map of transactions inside this block for quick intra-block lookup
+	blockTxs := make(map[string]*Transaction)
+	for _, tx := range block.Transactions {
+		blockTxs[hex.EncodeToString(tx.ID)] = tx
+	}
+
+	// 2. Verify each transaction
+	for _, tx := range block.Transactions {
+		if tx.IsCoinbase() {
+			continue
+		}
+
+		prevTXs := make(map[string]Transaction)
+		for _, vin := range tx.Vin {
+			parentTxID := hex.EncodeToString(vin.Txid)
+
+			// Check if the parent transaction is in the same block
+			if intraTx, exists := blockTxs[parentTxID]; exists {
+				prevTXs[parentTxID] = *intraTx
+			} else {
+				// Otherwise, it must be in the blockchain database
+				prevTX, err := chain.FindTransaction(vin.Txid)
+				if err != nil {
+					fmt.Printf("⛔ [VerifyBlockTransactions] Rejected: Parent transaction %x not found.\n", vin.Txid)
+					return false
+				}
+				prevTXs[parentTxID] = prevTX
+			}
+		}
+
+		// Verify the ECDSA signature of the inputs
+		if !tx.Verify(prevTXs) {
+			fmt.Printf("⛔ [VerifyBlockTransactions] Rejected: Invalid signature in transaction %x\n", tx.ID)
+			return false
+		}
+	}
+
+	return true
 }
 
 // Iterator returns a BlockchainIterator

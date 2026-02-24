@@ -212,3 +212,71 @@ func DeserializeUTXO(data []byte) TxOutput {
 	}
 	return out
 }
+
+// ValidateBlockTransactions verifies that all transactions in a block
+// only spend unspent outputs, including strict checks against double-spending
+// within the exact same block (mempool chaining).
+func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
+	db := u.Blockchain.Database
+	valid := true
+
+	// Keep track of outputs spent in this block to prevent double-spending
+	spentInBlock := make(map[string]bool)
+	// Keep track of outputs created in this block (mempool chaining)
+	createdInBlock := make(map[string]bool)
+
+	// First pass: Record all outputs created in this block
+	for _, tx := range block.Transactions {
+		txID := hex.EncodeToString(tx.ID)
+		for outIdx := range tx.Vout {
+			key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
+			createdInBlock[key] = true
+		}
+	}
+
+	err := db.View(func(txn *badger.Txn) error {
+		for _, tx := range block.Transactions {
+			if tx.IsCoinbase() {
+				continue
+			}
+			for _, vin := range tx.Vin {
+				txID := hex.EncodeToString(vin.Txid)
+				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
+
+				// 1. Check if already spent by another transaction in THIS block
+				if spentInBlock[key] {
+					fmt.Printf("⛔ [UTXOSet] Double spend detected within block! Input: %s\n", key)
+					valid = false
+					return nil // Stop checking
+				}
+
+				// 2. Check if the output was created in THIS block
+				if createdInBlock[key] {
+					spentInBlock[key] = true
+					continue // Valid intra-block spend
+				}
+
+				// 3. Otherwise, it MUST exist in the UTXO database
+				_, err := txn.Get([]byte(key))
+				if err == badger.ErrKeyNotFound {
+					fmt.Printf("⛔ [UTXOSet] Invalid input! UTXO not found: %s\n", key)
+					valid = false
+					return nil
+				} else if err != nil {
+					return err
+				}
+
+				// Mark as spent to prevent double-spending in subsequent transactions in this block
+				spentInBlock[key] = true
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("⛔ [UTXOSet] Validation failed due to DB error: %s\n", err)
+		return false
+	}
+
+	return valid
+}

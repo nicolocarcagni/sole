@@ -457,6 +457,12 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 	block := DeserializeBlock(payload.Block)
 	fmt.Printf("Received new block! Hash: %x\n", block.Hash)
 
+	// [SECURITY FIX] Validate UTXOs (Double-spend check) before processing the block
+	if !s.UTXOSet.ValidateBlockTransactions(block) {
+		fmt.Printf("⛔ Block %x rejected: Contains double-spends or invalid inputs.\n", block.Hash)
+		return
+	}
+
 	if s.Blockchain.AddBlock(block) {
 		s.UTXOSet.Update(block)
 		fmt.Printf("Block added %x and UTXO set updated.\n", block.Hash)
@@ -534,13 +540,13 @@ func (s *Server) AttemptMine() {
 		tx := s.Mempool[id]
 		if s.Blockchain.VerifyTransaction(&tx) {
 			txs = append(txs, &tx)
+		} else {
+			delete(s.Mempool, id) // Clear invalid tx
 		}
 	}
 
 	if len(txs) == 0 {
 		fmt.Println("All transactions in mempool are invalid.")
-		// We should clear invalid txs to avoid infinite loops?
-		// For now simple return.
 		return
 	}
 
@@ -551,7 +557,16 @@ func (s *Server) AttemptMine() {
 
 	// Add Coinbase for Miner
 	cbTx := NewCoinbaseTX(s.MinerAddr, "", subsidy) // Dynamic Reward
-	txs = append([]*Transaction{cbTx}, txs...)      // Coinbase first
+
+	// [SECURITY FIX] Ensure the set of transactions doesn't contain double-spends
+	prospectiveBlock := &Block{Transactions: append([]*Transaction{cbTx}, txs...)}
+	if !s.UTXOSet.ValidateBlockTransactions(prospectiveBlock) {
+		fmt.Println("⚠️  Mempool contains conflicting transactions. Clearing Mempool.")
+		s.Mempool = make(map[string]Transaction)
+		return
+	}
+
+	txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
 
 	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
 	s.UTXOSet.Update(newBlock)
