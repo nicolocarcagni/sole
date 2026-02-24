@@ -1,33 +1,32 @@
-# SOLE Blockchain
-
+---
 ![Go Report](https://goreportcard.com/badge/github.com/nicolocarcagni/sole)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-success.svg)
-
-> **SOLE** is an academic **Proof-of-Authority (PoA)** blockchain implementation written in Go.  
-It powers the **Unisalento** digital token ecosystem, designed as a lightweight, performant distributed ledger for educational and research purposes.
-
 ---
 
-## 🏛 Project Overview
+# SOLE Blockchain
 
-The SOLE network is designed to be a **Hybrid P2P Network** that bridges the gap between robust, always-online public nodes and ephemeral private clients.
+SOLE (Secure Open Ledger for Education) is an academic Proof-of-Authority (PoA) blockchain implemented in Go. It provides a lightweight, performant distributed ledger environment designed specifically for educational integration and research at the University of Salento.
 
-*   **Consensus**: Proof of Authority (PoA). Selected validators (Rettore, Capo dipartimento, Docenti) sign blocks, ensuring low energy consumption and high throughput.
-*   **Performance**: **Persistent UTXO Set** (BadgerDB backed) for O(1) balance checks and instant transactions.
-*   **Tokenomics**: **Max Supply 19.55M SOLE**, Halving every 195.5k blocks, designed for long-term sustainability.
-*   **Networking**: Built on `libp2p`. Supports DHT Discovery, NAT Traversal, and MDNS for local peers.
-*   **Storage**: Uses BadgerDB (v3), a fast key-value store optimized for SSDs.
-*   **Interoperability**: Exposes a RESTful JSON API with **CORS Support** and **Rich JSON Responses** (Sender/Receiver Address resolution) for easy integration with Web Explorers and Wallets.
+## Project Overview
 
-## 🚀 Getting Started
+The SOLE network operates as a Hybrid P2P Network, prioritizing high throughput and immediate finality without the energy overhead of computational mining.
 
-### Prerequisites
-*   **Go** 1.19 or higher
+*   **Consensus**: Proof of Authority (PoA). A deterministic set of authorized validators (e.g., University Administration, Faculty) securely signs blocks.
+*   **Data Structure**: Features a Persistent UTXO Set backed by BadgerDB for strict double-spend prevention and $O(1)$ balance verification.
+*   **Tokenomics**: Hard-capped at 19.55 Million SOLE, featuring a deflationary emission curve halving every 195,500 blocks. 
+*   **Networking**: Operates on a modular `libp2p` stack supporting DHT-based peer discovery, NAT traversal, and automatic mDNS for LAN synchronization.
+*   **Interoperability**: Exposes a robust JSON REST API for seamless integration with external wallets and blockchain explorers.
 
-### Installation
+## Prerequisites
 
-Clone the repository and build the CLI tool:
+*   Go 1.19 or higher
+
+## Quickstart
+
+### Build the Node
+
+Clone the repository and compile the CLI executable:
 
 ```bash
 git clone https://github.com/nicolocarcagni/sole.git
@@ -35,80 +34,25 @@ cd sole
 go build -o sole-cli .
 ```
 
-### Running a Node
+### Run the Node
 
-To join the main network immediately (Zero-Config):
+To bootstrap the local persistence layer and immediately join the public P2P network:
 
 ```bash
-./sole-cli init
+./sole-cli chain init
 ./sole-cli node start
 ```
 
-The node will automatically:
-1.  Initialize a secure identity (`node_key.dat`).
-2.  Connect to the default public bootnodes (`sole.nicolocarcagni.dev`).
-3.  Begin synchronizing the blockchain.
+This sequence automatically generates a persistent P2P identity (`node_key.dat`), attempts to reach the configured bootstrap nodes, and begins block synchronization.
 
----
+## Documentation
 
-## 🛠 Command Line Interface
+Comprehensive technical documentation is maintained in the `docs/` directory.
 
-The `sole-cli` tool manages all aspects of the node and wallet.
-
-### Wallet Management
-
-```bash
-# Create a new wallet address and keypair
-./sole-cli wallet create
-
-# Check the balance of an address
-./sole-cli wallet balance --address <ADDRESS>
-```
-
-### Transactions
-
-Send tokens (SOLE) to another address.
-
-```bash
-./sole-cli tx send --from <SENDER> --to <RECEIVER> --amount <VALUE>
-```
-
-### Mining (Validators Only)
-
-If you hold a validator key, you can start the node in mining mode:
-
-```bash
-./sole-cli node start --miner <VALIDATOR_ADDRESS>
-```
-
----
-
-## 🔌 API Integration
-
-Developers can interact with the node via HTTP. The default port is `8080`.
-
-| Endpoint | Method | Description |
-| :--- | :--- | :--- |
-| `/blocks/tip` | `GET` | Get current chain height and hash. |
-| `/balance/{address}` | `GET` | Get confirmed balance. |
-| `/transactions/{address}` | `GET` | Get full transaction history. |
-| `/transaction/{id}` | `GET` | Get details of a single transaction. |
-| `/tx/send` | `POST` | Broadcast a signed transaction. |
-
-> See the full [API Reference](docs/api_reference.md) for details.
-
----
-
-## 📚 Documentation
-
-Detailed documentation is available in the `docs/` directory:
-
-*   **[API Reference](docs/api_reference.md)**: complete endpoints specification.
-*   **[CLI Manual](docs/cli_manual.md)**: flags and advanced configuration.
-
----
+*   **[CLI Manual](docs/cli_manual.md)**: Detailed command-line usage and node configuration flags.
+*   **[API Reference](docs/api_reference.md)**: Exact JSON schemas and REST endpoints for external integrators.
+*   **[Technical Whitepaper](docs/whitepaper.md)**: Cryptographic specifications and consensus architecture.
 
 ## Disclaimer
 
-> This software is a **Proof of Concept (PoC)** developed for the **University of Salento**.  
-It is intended (sole)ly for academic research and testing. It applies cryptographic primitives (ECDSA, SHA-256, RIPEMD160) but has not undergone a professional security audit. **Do not use for real-world financial assets.**
+This software is provided exclusively for academic research and testing. While it implements standard cryptographic primitives (ECDSA, NIST P-256, SHA-256), the codebase has not undergone a commercial security audit. It is strictly prohibited from holding real-world financial assets.

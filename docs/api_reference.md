@@ -1,178 +1,179 @@
 # SOLE API Reference
 
-The SOLE Node exposes a RESTful API for external interaction (Wallets, Explorers, Monitors).
+The SOLE node exposes a RESTful JSON HTTP server for managing transactions, checking chain topologies, and retrieving network heuristics. By default, it listens on port `8080`.
 
-*   **Default Port**: `8080`
-*   **Content-Type**: `application/json`
+## Rate Limiting
+To ensure reliable operation across distributed network topographies, endpoints are rate-limited per connecting IP:
+*   **Data Endpoints (`GET`)**: 20 requests/sec (burst tolerance: 30)
+*   **Action Endpoints (`POST`)**: 5 requests/sec (burst tolerance: 10)
 
----
-
-## Endpoints
-
-### 1. Check Balance
-Retrieves the confirmed balance of a specific address.
-
-**Request**
-`GET /balance/{address}`
-
-**Response**
-```json
-{
-  "address": "15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw",
-  "balance": 500000000 // In Fotoni (Smallest Unit)
-}
-```
-
-**Example**
-```bash
-curl -s http://localhost:8080/balance/15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw
-```
+All successful queries yield JSON payloads. Endpoints return precise JSON mappings for cryptographic components.
 
 ---
 
-### 2. Send Transaction
-Broadcasts a signed transaction to the P2P network.
+### `GET /blocks/tip`
+Retrieves the most recent block's parameters (the current chain tip).
 
-**Request**
-`POST /tx/send`
-
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| `hex` | `string` | The raw, signed transaction bytes encoded in Hex. |
-
-**Response**
-```json
-{
-  "status": "success",
-  "txid": "775a47b20d299aceeeaf56b5a7404b2534f84f524aceefd8dc05ee1c29b50d27"
-}
-```
-
-**Example**
-```bash
-# Payload must be a JSON object containing the hex string
-curl -X POST http://localhost:8080/tx/send \
-     -H "Content-Type: application/json" \
-     -d '{"hex": "010000..."}'
-```
+*   **Parameters**: None
+*   **Response**:
+    ```json
+    {
+      "height": 142,
+      "hash": "00af160f81ccd73bf3222f5628f02283d3efc2b24b038c408a2b3df1a4dce26b"
+    }
+    ```
 
 ---
 
-### 3. Transaction History
-Retrieves all transactions (sent and received) associated with an address.
+### `GET /blocks/{hash}`
+Retrieves total topological parameters and transaction arrays for a specific block hash.
 
-**Request**
-`GET /transactions/{address}`
+*   **Parameters**:
+    *   `hash` (URL Path): 64-character hex-encoded string of the queried block.
+*   **Response**:
+    ```json
+    {
+      "timestamp": 1708816000,
+      "height": 142,
+      "prev_block_hash": "006246d2dcdf635d429ee956b702e45e2e4e3e9317310d5d81e4a76d7774706e",
+      "hash": "00af160f81ccd73bf3222f5628f02283d3efc2b24b038c408a2b3df1a4dce26b",
+      "transactions": [
+        {
+          "id": "1a638f8f882ea9bd9b80b9ff9d14e99d2f4249ada1e3cf9fb32bf3039d060131",
+          "inputs": [],
+          "outputs": [],
+          "timestamp": 1708816000
+        }
+      ],
+      "validator": "0499962080b1c07db1ecb7f2d58978203dfe5eede8e648c3755afed392fec7716d8c7a0fe455d15d64b8dd1363d60c78926e9dce4aad2e08a0006cd50215cb87c3",
+      "signature": "30440220689..."
+    }
+    ```
 
-**Response**
-Returns an array of **Rich Transaction Objects**.
-```json
-[
-  {
-    "id": "775a47b2...",
-    "inputs": [
+---
+
+### `GET /balance/{address}`
+Queries the UTXO set for the aggregate confirmed balance available to an address.
+
+*   **Parameters**:
+    *   `address` (URL Path): Standard Base58 check-encoded SOLE address.
+*   **Response**:
+    ```json
+    {
+      "address": "1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL",
+      "balance": 499900000000000
+    }
+    ```
+
+---
+
+### `GET /utxos/{address}`
+Retrieves a flat list of unspent transaction outputs explicitly locked to the referenced address. Essential for external wallet SDKs attempting to construct off-grid transaction structures manually.
+
+*   **Parameters**:
+    *   `address` (URL Path): Standard Base58 check-encoded SOLE address.
+*   **Response**:
+    ```json
+    [
       {
-        "sender_address": "15U3MUvm...",
-        "signature": "30450221..."
+        "txid": "1a638f8f882ea9bd9b80b9ff9d14e99d2f4249ada1e3cf9fb32bf3039d060131",
+        "vout": 0,
+        "amount": 499900000000000
       }
-    ],
-    "outputs": [
-      {
-        "receiver_address": "1J7md...",
-        "value": 100000000,
-        "value_sole": 1.0
-      }
-    ],
-    "timestamp": 1706572800
-  }
-]
-```
+    ]
+    ```
 
 ---
 
-### 4. Get Single Transaction
-Retrieves details of a specific transaction by its Hash ID (Hex).
+### `GET /transaction/{id}`
+Extracts full input, output array bindings, and value routes (both Photons and fractional SOLE implementations) for a specific transaction ID.
 
-**Request**
-`GET /transaction/{txid}`
-
-**Response**
-Returns a single **Rich Transaction Object**.
-
-```json
-{
-  "id": "775a47b2...",
-  "inputs": [...],
-  "outputs": [...],
-  "timestamp": 1706572800
-}
-```
-
-**Errors**
-*   `404 Not Found`: If transaction does not exist.
-
-**Example**
-```bash
-curl -s http://localhost:8080/transaction/775a47b2...
-```
-
-**Example**
-```bash
-curl -s http://localhost:8080/transactions/15U3MUvm16pZSH8WTZHkUw8ngNMjB1pfpw
-```
+*   **Parameters**:
+    *   `id` (URL Path): 64-character hex-encoded transaction ID.
+*   **Response**:
+    ```json
+    {
+      "id": "1a638f8f882ea9bd9b80b9ff9d14e99d2f4249ada1e3cf9fb32bf3039d060131",
+      "inputs": [
+        {
+          "sender_address": "1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL",
+          "signature": "3044..."
+        }
+      ],
+      "outputs": [
+        {
+          "receiver_address": "1SoLErUCu4pL7qrTAouiY4TfWwzAwBsnn",
+          "value": 499900000000000,
+          "value_sole": 4999000.0
+        }
+      ],
+      "timestamp": 1708816000
+    }
+    ```
 
 ---
 
----
+### `GET /transactions/{address}`
+Returns all transactions (historical and current) bound to a specific address, either as a sender (input component) or a receiver (output subset).
 
-### 5. Network Peers
-Retrieves the list of currently connected P2P peers.
-
-**Request**
-`GET /network/peers`
-
-**Response**
-```json
-{
-  "total_peers": 3,
-  "peers": [
-    "QmXyZ...",
-    "QmAbC..."
-  ]
-}
-```
+*   **Parameters**:
+    *   `address` (URL Path): Standard Base58 check-encoded SOLE address.
+*   **Response**: Returns an array of Transaction Output JSON structures (as specified in `/transaction/{id}`).
 
 ---
 
-### 6. Consensus Validators
-Retrieves the list of authorized PoA validators.
+### `GET /network/peers`
+Lists all currently connected nodes mapped through the node's local libp2p swarm host.
 
-**Request**
-`GET /consensus/validators`
-
-**Response**
-```json
-{
-  "total_validators": 2,
-  "validators": [
-    "033cc6...",
-    "5b28a2..."
-  ]
-}
-```
+*   **Parameters**: None
+*   **Response**:
+    ```json
+    {
+      "total_peers": 1,
+      "peers": [
+        "/ip4/192.168.1.81/tcp/3001/p2p/12D3KooWE6o6RXZaueTmwTjRWf6Dj86k57jnWmAgZW88UMrPhRLG"
+      ]
+    }
+    ```
 
 ---
 
-### 7. Chain Info
-Getting the current state of the blockchain tip.
+### `GET /consensus/validators`
+Yields a statically defined array of authority keys recognized by the node's current binary schema. Validates network security topologies.
 
-**Request**
-`GET /blocks/tip`
+*   **Parameters**: None
+*   **Response**:
+    ```json
+    {
+      "total_validators": 3,
+      "validators": [
+        "0499962080b1c07db1ecb..."
+      ]
+    }
+    ```
 
-**Response**
-```json
-{
-  "height": 105,
-  "hash": "3efde2efcf587408ec288bd0cebf4c42da62685fc955dd77272d65fd93a3e7d4"
-}
-```
+---
+
+### `POST /tx/send`
+Submits a raw, properly structured and cryptographically signed hex byte array containing an unconfirmed transaction to the local memory pool.
+
+*   **Headers**: `Content-Type: application/json`
+*   **Payload**:
+    ```json
+    {
+      "hex": "01000000018a..."
+    }
+    ```
+*   **Response** (Success):
+    ```json
+    {
+      "status": "success",
+      "txid": "7b2e..."
+    }
+    ```
+*   **Response** (Error):
+    ```json
+    {
+      "error": "Transaction invalid"
+    }
+    ```

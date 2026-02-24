@@ -1,172 +1,145 @@
 # SOLE CLI Manual
 
-The **SOLE CLI** (`sole-cli`) is the unified command-line interface for interacting with the SOLE Blockchain. It allows you to manage wallets, operate a full node, inspect the blockchain, and send transactions.
+The `sole-cli` provides the primary interface for managing wallets, transacting funds, configuring the local database, and running a P2P node for the SOLE blockchain.
+
+## Command Structure
+
+The CLI is organized into four main categories: `wallet`, `chain`, `node`, and `tx`. 
+Syntax: `./sole-cli <category> <command> [flags]`
 
 ---
 
-## Introduction
+## 1. Wallet Management (`wallet`)
 
-The CLI uses a **resource-based** structure, similar to `kubectl` or `docker`.
-The general syntax is:
+Commands to create, import, export, and inspect cryptographic keys and balances.
 
-```bash
-./sole-cli <RESOURCE> <ACTION> [FLAGS]
-```
+### `create`
+Generates a new ECDSA keypair and saves it to the local `wallet.dat` database.
+*   **Flags:** None
+*   **Example:**
+    ```bash
+    ./sole-cli wallet create
+    ```
 
-**Available Resources:**
-*   `wallet`: Manage keys and addresses.
-*   `chain`: Initialize and inspect the blockchain database.
-*   `node`: Run the P2P daemon and miner.
-*   `tx`: Create and broadcast transactions.
+### `list`
+Lists all public addresses stored in the local wallet file.
+*   **Flags:** None
+*   **Example:**
+    ```bash
+    ./sole-cli wallet list
+    ```
 
----
+### `import`
+Imports an existing wallet using its raw private key in hexadecimal format.
+*   **Required Flags:**
+    *   `--key <HEX>`: The private key string (must be valid 64-character hex).
+*   **Example:**
+    ```bash
+    ./sole-cli wallet import --key a1b2c3d4e5f6...
+    ```
 
-## Wallet Management (`wallet`)
+### `remove`
+Deletes a specific wallet from the local file securely.
+*   **Required Flags:**
+    *   `--address <ADDR>`: The Base58-encoded address to remove.
+*   **Example:**
+    ```bash
+    ./sole-cli wallet remove --address 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL
+    ```
 
-Manage your ECDSA key pairs and addresses.
+### `balance`
+Fetches the confirmed confirmed balance (available Unspent Transaction Outputs) for a given address.
+*   **Required Flags:**
+    *   `--address <ADDR>`: The Base58-encoded address.
+*   **Example:**
+    ```bash
+    ./sole-cli wallet balance --address 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL
+    ```
 
-### Create a New Wallet
-Generates a new private key and saves it to `wallet.dat`.
-
-```bash
-./sole-cli wallet create
-```
-
-### List Addresses
-Displays all addresses stored in the local wallet file.
-
-```bash
-./sole-cli wallet list
-```
-
-### Import a Private Key
-Imports an existing ECDSA P-256 private key (in Hex format).
-
-```bash
-./sole-cli wallet import --key <PRIVATE_KEY_HEX>
-```
-
-### Remove a Wallet
-Removes a specific address and its key from the local storage.
-**Warning**: This action is irreversible if you don't have a backup.
-
-```bash
-./sole-cli wallet remove --address <ADDRESS>
-```
-
-### Export Private Key
-Reveals the private key for a specific address.
-
-```bash
-./sole-cli wallet export --address <ADDRESS>
-```
-
-### Check Balance
-Checks the balance of an address by scanning the local UTXO set.
-
-```bash
-./sole-cli wallet balance --address <ADDRESS>
-```
+### `export`
+Prints the private key (in Hex) associated with an address for backup purposes.
+*   **Required Flags:**
+    *   `--address <ADDR>`: The Base58-encoded address.
+*   **Example:**
+    ```bash
+    ./sole-cli wallet export --address 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL
+    ```
 
 ---
 
-## Blockchain Management (`chain`)
+## 2. Blockchain Operations (`chain`)
 
-Manage the local blockchain database (`./data/blocks`).
+Commands to bootstrap, verify, and maintain the persistent BadgerDB block store.
 
-### Initialize Blockchain
-Initializes the database with the Genesis Block.
-**Run this once before starting the node.**
+### `init`
+Initializes a new contiguous blockchain database starting with the official Genesis Block. Must be run before starting a fresh node.
+*   **Flags:** None
+*   **Example:**
+    ```bash
+    ./sole-cli chain init
+    ```
 
-```bash
-./sole-cli chain init
-```
+### `reindex`
+Forces a complete rebuild of the UTXO (Unspent Transaction Output) cache from the main blockchain index. Useful for correcting local state cache corruptions.
+*   **Flags:** None
+*   **Example:**
+    ```bash
+    ./sole-cli chain reindex
+    ```
 
-### Reindex UTXO Set
-Rebuilds the Unspent Transaction Output (UTXO) set from the full block history. Use this if the database state seems inconsistent.
+### `print`
+Iterates through the entire sequential ledger from the current Tip down to the Genesis block, outputting all transaction data to standard output.
+*   **Flags:** None
+*   **Example:**
+    ```bash
+    ./sole-cli chain print
+    ```
 
-```bash
-./sole-cli chain reindex
-```
-
-### Print Blockchain
-Prints the full history of blocks to stdout.
-
-```bash
-./sole-cli chain print
-```
-
-### Reset Blockchain
-**DANGER**: Deletes the entire blockchain database. Requires confirmation.
-
-```bash
-./sole-cli chain reset
-```
-
----
-
-## Node Operations (`node`)
-
-Operate the P2P node.
-
-### Start Node
-Starts the P2P daemon. This command blocks until the node is stopped (Ctrl+C).
-
-```bash
-./sole-cli node start [flags]
-```
-
-#### Networking Flags
-
-| Flag | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--port` | Int | `3000` | P2P Listen Port (TCP). |
-| `--listen` | IP | `0.0.0.0` | Bind Address. |
-| `--bootnodes` | String | `""` | Comma-separated list of bootstrap peers. |
-| `--public-ip` | IP | `""` | Public IPv4 to announce (for NAT/VPS). |
-| `--public-dns` | String | `""` | Domain name to announce (e.g., `node.sole.com`). |
-
-#### Mining Flags
-
-| Flag | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--miner` | Address | `""` | Address to credit mining rewards to. Enables mining. |
-
-#### API Flags
-
-| Flag | Type | Default | Description |
-| :--- | :--- | :--- | :--- |
-| `--api-port` | Int | `8080` | HTTP API Port. |
-| `--api-listen` | IP | `0.0.0.0` | HTTP API Bind Address. |
+### `reset`
+Irreversibly deletes the current local blockchain database.
+*   **Flags:** None
+*   **Example:**
+    ```bash
+    ./sole-cli chain reset
+    ```
 
 ---
 
-## Transactions (`tx`)
+## 3. Node & Network (`node`)
 
-Create and broadcast transactions.
+Commands to spin up the libp2p network interface, REST API server, and block forging procedures.
 
-### Send Funds
-Sends SOLE coins from one address to another.
-
-```bash
-./sole-cli tx send --from <SENDER> --to <RECEIVER> --amount <AMOUNT>
-```
-
-*   `--amount`: Value in SOLE (decimal allowed).
-*   `--dry-run`: If set, prints the signed transaction hex without broadcasting.
+### `start`
+Bootstraps the P2P networking stack and the local REST API server. Can optionally initiate the block forging engine if an authorized validator key is provided.
+*   **Optional Flags:**
+    *   `--port <INT>`: Local P2P TCP port (Default: 3000).
+    *   `--listen <IP>`: Interface address to bind the P2P listener (Default: 0.0.0.0).
+    *   `--public-ip <IP>`: Publicly routable IP address to announce to the DHT.
+    *   `--public-dns <DOMAIN>`: Publicly routable DNS record to announce to the DHT.
+    *   `--bootnodes <MULTIADDRS>`: Comma-separated libp2p multiaddrs to use for bootstrapping discovery.
+    *   `--miner <ADDR>`: Base58-encoded address of an authorized validator to enable block forging.
+    *   `--api-port <INT>`: Local REST API Server port (Default: 8080).
+    *   `--api-listen <IP>`: Interface address to bind the REST API listener (Default: 0.0.0.0).
+*   **Example:**
+    ```bash
+    ./sole-cli node start --port 3000 --miner 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL --api-port 8080
+    ```
 
 ---
 
-## Shell Autocompletion (`completion`)
+## 4. Transactions (`tx`)
 
-Generate autocompletion scripts for your shell.
+Commands related to constructing, signing, and broadcasting operations to the blockchain.
 
-**Bash:**
-```bash
-source <(./sole-cli completion bash)
-```
-
-**Zsh:**
-```bash
-source <(./sole-cli completion zsh)
-```
+### `send`
+Generates a new UTXO transaction, signs the inputs using the sender's private key, and broadcasts the operation to the network's mempool via the P2P swarm.
+*   **Required Flags:**
+    *   `--from <ADDR>`: Source address (must exist in local `wallet.dat`).
+    *   `--to <ADDR>`: Destination address.
+    *   `--amount <FLOAT>`: Quantity of SOLE tokens to transfer (decimal precision supported).
+*   **Optional Flags:**
+    *   `--dry-run`: Constructs and signs the transaction hex but does not broadcast it to the network.
+*   **Example:**
+    ```bash
+    ./sole-cli tx send --from 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL --to 1SoLErUCu4pL7qrTAouiY4TfWwzAwBsnn --amount 5.5
+    ```
