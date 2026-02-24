@@ -77,18 +77,18 @@ func InitBlockchain() (*Blockchain, error) {
 
 	err = db.Update(func(txn *badger.Txn) error {
 		genesis := NewGenesisBlock()
-		fmt.Println("Genesis Block created")
+		fmt.Println("🌟 Genesis Block created")
 
 		err = txn.Set(genesis.Hash, genesis.Serialize())
 		if err != nil {
-			log.Panic(err)
+			return fmt.Errorf("failed to save genesis block: %w", err)
 		}
 
 		// [OPTIMIZATION] Index transactions for O(1) lookup
 		for _, tx := range genesis.Transactions {
 			err = txn.Set(append([]byte("tx-"), tx.ID...), genesis.Hash)
 			if err != nil {
-				log.Panic(err)
+				return fmt.Errorf("failed to index genesis transactions: %w", err)
 			}
 		}
 
@@ -97,7 +97,7 @@ func InitBlockchain() (*Blockchain, error) {
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("InitBlockchain database update failed: %w", err)
 	}
 
 	blockchain := Blockchain{lastHash, db, sync.Mutex{}}
@@ -117,19 +117,19 @@ func ContinueBlockchain(address string) *Blockchain {
 
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to open blockchain database: %v\n", err)
 	}
 
 	err = db.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte("lh"))
 		if err != nil {
-			log.Panic(err)
+			return err
 		}
 		lastHash, err = item.ValueCopy(nil)
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to retrieve last block hash: %v\n", err)
 	}
 
 	chain := Blockchain{lastHash, db, sync.Mutex{}}
@@ -146,23 +146,23 @@ func ContinueBlockchainReadOnly(address string) *Blockchain {
 	var lastHash []byte
 	opts := badger.DefaultOptions(dbPath)
 	opts.Logger = nil
-	opts.ReadOnly = true // Enable ReadOnly
+	opts.ReadOnly = true
 
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to open blockchain database in Read-Only mode: %v\n", err)
 	}
 
 	err = db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte("lh"))
 		if err != nil {
-			log.Panic(err)
+			return err
 		}
 		lastHash, err = item.ValueCopy(nil)
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to retrieve last block hash (Read-Only): %v\n", err)
 	}
 
 	chain := Blockchain{lastHash, db, sync.Mutex{}}
@@ -280,13 +280,13 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 	err := chain.Database.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte("lh"))
 		if err != nil {
-			log.Panic(err)
+			return err
 		}
 		lastHash, err = item.ValueCopy(nil)
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to retrieve last hash during forgery: %v", err)
 	}
 
 	var lastBlockData []byte
@@ -372,27 +372,19 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 	})
 
 	if err == nil {
-		// Only validate against previous block if we can find it (Genesis handling is special case usually, but AddBlock implies appending)
 		if err := ValidateBlockHeader(block, &lastBlock); err != nil {
 			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
 			return false
 		}
-	} else {
-		// If we can't find LH, maybe it's the first block?
-		// If DB is empty, InitBlockchain should be used.
-		// If we are syncing, we might be adding blocks in order.
-		// For now, let's assume we always have a tip.
 	}
 
 	// 2. Verify PoA signature
-	// Note: We already hold the lock, but IsAuthorizedValidator is static. VerifyBlockSignature is stateless.
-	// But it prints to stdout.
 	if !VerifyBlockSignature(block) {
 		fmt.Println("AddBlock: Block rejected - invalid PoA signature")
 		return false
 	}
 
-	// New fix: Verify all internal transaction signatures (including intra-block)
+	// 3. Verify all internal transaction signatures (including intra-block)
 	if !chain.VerifyBlockTransactions(block) {
 		fmt.Println("AddBlock: Block rejected - invalid transaction signatures")
 		return false
@@ -409,7 +401,7 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 			return err
 		}
 
-		// [OPTIMIZATION] Index transactions for O(1) lookup
+		// Index transactions for O(1) lookup
 		for _, tx := range block.Transactions {
 			err = txn.Set(append([]byte("tx-"), tx.ID...), block.Hash)
 			if err != nil {
@@ -437,8 +429,10 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 
 		return err
 	})
+
 	if err != nil {
-		log.Panic(err)
+		fmt.Printf("⛔ AddBlock: Failed to save block to database: %v\n", err)
+		return false
 	}
 	return true
 }

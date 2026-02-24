@@ -35,12 +35,6 @@ func GetSignatureBytes(r, s *big.Int) []byte {
 	sBytes := s.Bytes()
 
 	sigBytes := make([]byte, 64)
-	// Copy r to first 32 bytes (right aligned if needed, but big.Int.Bytes is purely value.
-	// We need 32 bytes. If len > 32 (rare with P256 but possible if leading bit is 1 and interpreted as signed? No, ECDSA is unsigned)
-	// If len < 32, we pad with leading zeros.
-	// copy() matches indices.
-	// To pad left:
-	// copy(sigBytes[32-len(rBytes):32], rBytes)
 	copy(sigBytes[32-len(rBytes):32], rBytes)
 	copy(sigBytes[64-len(sBytes):64], sBytes)
 
@@ -73,15 +67,11 @@ func VerifyBlockSignature(block *Block) bool {
 		return false
 	}
 
-	// PATCH: Handle both Raw (64 bytes) and Standard (65 bytes) Public Keys
+	// Handle both Raw (64 bytes) and Standard (65 bytes) Public Keys seamlessly
 	var pubKeyBytes []byte
 	var x, y *big.Int
 
 	if len(block.Validator) == 64 {
-		// Log detection of old format (optional but helpful)
-		// fmt.Println("PoA: Detected Raw Public Key (64 bytes). Normalizing...")
-
-		// Normalize to Standard Format (Prefix 0x04)
 		pubKeyBytes = append([]byte{0x04}, block.Validator...)
 		x = new(big.Int).SetBytes(block.Validator[:32])
 		y = new(big.Int).SetBytes(block.Validator[32:])
@@ -98,23 +88,18 @@ func VerifyBlockSignature(block *Block) bool {
 		return false
 	}
 
-	// Check if validator is authorized using the NORMALIZED (Standard) Hex string
 	validatorHex := hex.EncodeToString(pubKeyBytes)
 	if !IsAuthorizedValidator(validatorHex) {
 		fmt.Printf("PoA: Validator %s... is not authorized\n", validatorHex[:16])
 		return false
 	}
 
-	// Reconstruct public key from Validator bytes
 	curve := elliptic.P256()
 	pubKey := ecdsa.PublicKey{Curve: curve, X: x, Y: y}
 
-	// Extract R and S from signature (fixed 32 bytes each)
 	r := new(big.Int).SetBytes(block.Signature[:32])
 	s := new(big.Int).SetBytes(block.Signature[32:])
 
-	// Verify STRICTLY against the Block Hash (as signed by Validator)
-	// We trust the Hash integrity is checked elsewhere or we accept the Hash as the identity.
 	if !ecdsa.Verify(&pubKey, block.Hash, r, s) {
 		fmt.Printf("PoA: Block signature verification failed. len(sig)=%d\n", len(block.Signature))
 		return false
@@ -133,13 +118,8 @@ func GetValidatorHex(w Wallet) string {
 const (
 	// DriftTolerance is the allowed time difference for block timestamp
 	DriftTolerance = 1 * time.Minute
-	// PoADifficulty is the number of leading zero bits required (symbolic PoW)
-	// For educational efficiency, we use a simple check (e.g., Hash starts with 0x0...)
-	// Here we check if the first N bytes are 0. Let's say 1 byte (buffer[0] == 0) for very easy,
-	// or 2 bytes for harder.
-	// User requested "Starts with at least 1 zero or 4 bit a zero".
-	// Let's require the first 2 hex chars (1 byte) to be 00.
-	TargetZeros = 1 // Leading bytes must be 0x00
+	// TargetZeros enforces a minimal PoW to prevent spamming
+	TargetZeros = 1
 )
 
 // MineBlock performs the "Mining" (finding a valid Nonce)

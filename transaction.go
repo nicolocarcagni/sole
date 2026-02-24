@@ -55,7 +55,7 @@ func (outs TxOutputs) Serialize() []byte {
 	enc := gob.NewEncoder(&buff)
 	err := enc.Encode(outs)
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Serialization failed: %v", err)
 	}
 	return buff.Bytes()
 }
@@ -66,7 +66,7 @@ func DeserializeOutputs(data []byte) TxOutputs {
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	err := dec.Decode(&outputs)
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Deserialization failed: %v", err)
 	}
 	return outputs
 }
@@ -220,7 +220,7 @@ func (tx Transaction) SerializeForHash() []byte {
 	return encoded.Bytes()
 }
 
-// Sign signs each input of a Transaction
+// Sign signs each input of a Transaction using the provided private key.
 func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transaction) {
 	if tx.IsCoinbase() {
 		return
@@ -228,7 +228,8 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 
 	for _, vin := range tx.Vin {
 		if prevTXs[hex.EncodeToString(vin.Txid)].ID == nil {
-			log.Panic("ERROR: Previous transaction is not correct")
+			fmt.Printf("⚠️  [Sign] Skipped input: Previous transaction %x not found in context.\n", vin.Txid)
+			return // Cannot sign if input tx is missing
 		}
 	}
 
@@ -243,7 +244,7 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 
 		r, s, err := ecdsa.Sign(rand.Reader, &privKey, txCopy.ID)
 		if err != nil {
-			log.Panic(err)
+			log.Fatalf("Fatal: ECDSA signing failed: %v", err)
 		}
 		rBytes := make([]byte, 32)
 		sBytes := make([]byte, 32)

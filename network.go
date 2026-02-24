@@ -164,7 +164,7 @@ func NewServer(cfg ServerConfig) *Server {
 	if cfg.PublicDNS != "" {
 		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns4/%s/tcp/%d", cfg.PublicDNS, cfg.Port))
 		if err != nil {
-			log.Panicf("Invalid Public DNS Multiaddr: %s", err)
+			log.Fatalf("Fatal: Invalid Public DNS Multiaddr: %v", err)
 		}
 		addrFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			return []multiaddr.Multiaddr{externalAddr}
@@ -174,23 +174,20 @@ func NewServer(cfg ServerConfig) *Server {
 	} else if cfg.PublicIP != "" {
 		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", cfg.PublicIP, cfg.Port))
 		if err != nil {
-			log.Panicf("Invalid Public IP Multiaddr: %s", err)
+			log.Fatalf("Fatal: Invalid Public IP Multiaddr: %v", err)
 		}
 
-		// Factory to force announcing ONLY the external address (or append it)
-		// We usually want to announce the public capability.
+		// Factory to force announcing ONLY the external address
 		addrFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
-			// In strict scenarios, return only externalAddr
 			return []multiaddr.Multiaddr{externalAddr}
 		}
 		opts = append(opts, libp2p.AddrsFactory(addrFactory))
-		// Force public reachability flag
 		opts = append(opts, libp2p.ForceReachabilityPublic())
 	}
 
 	h, err := libp2p.New(opts...)
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to start libp2p host: %v", err)
 	}
 
 	// Using Default Bootnodes if needed

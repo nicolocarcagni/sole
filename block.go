@@ -33,9 +33,9 @@ func (b *Block) Serialize() []byte {
 	return result.Bytes()
 }
 
-// SetHash calculates and sets the hash of the block
+// SetHash calculates and sets the deterministic SHA-256 hash of the block header.
+// It explicitly excludes the Signature field to prevent malleability.
 func (b *Block) SetHash() {
-	// 1. Calculate Merkle Root of Transactions
 	var txHashes [][]byte
 	for _, tx := range b.Transactions {
 		txHashes = append(txHashes, tx.ID)
@@ -49,18 +49,7 @@ func (b *Block) SetHash() {
 		merkleRoot = []byte{}
 	}
 
-	// 2. Prepare Header for Hashing (Deterministic)
-	// Structure: PrevBlockHash + MerkleRoot + Timestamp + Height + Nonce + Validator
-	// We MUST exclude Signature (it signs this hash)
-
-	// Encode Ints to fixed-size BigEndian bytes for compatibility and determinism
-	// (IntToHex used variable length which is risky for canonical hashing,
-	// but to safely strictly follow the request "Hardening", we use Gob or Binary)
-	// For simplicity and standard compliance, we stick to standard concatenation of fixed components.
-
-	timestampBytes := IntToHex(b.Timestamp) // Keeping utility for now if consistently used, but binary.BigEndian is better.
-	// Let's stick to IntToHex if that's what utility provides to minimize diff,
-	// OR swith to binary. Let's assume IntToHex returns valid bytes.
+	timestampBytes := IntToHex(b.Timestamp)
 	heightBytes := IntToHex(int64(b.Height))
 	nonceBytes := IntToHex(int64(b.Nonce))
 
@@ -80,9 +69,7 @@ func (b *Block) SetHash() {
 	b.Hash = hash[:]
 }
 
-// HashTransactions returns a hash of the transactions in the block
-// Deprecated in favor of internal Merkle Root calculation in SetHash,
-// but kept/updated for compatibility if interfaces need it.
+// HashTransactions returns the Merkle Root of the block's transactions.
 func (b *Block) HashTransactions() []byte {
 	var txHashes [][]byte
 	for _, tx := range b.Transactions {

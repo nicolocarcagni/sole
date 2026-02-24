@@ -29,7 +29,7 @@ func (u UTXOSet) Reindex() {
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to clear UTXO set prefix: %v", err)
 	}
 
 	UTXO := u.Blockchain.FindUTXO()
@@ -47,7 +47,7 @@ func (u UTXOSet) Reindex() {
 		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		log.Fatalf("Fatal: Failed to rebuild UTXO set: %v", err)
 	}
 }
 
