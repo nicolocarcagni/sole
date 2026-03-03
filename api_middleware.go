@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"io"
+	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,7 +36,6 @@ func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
 			i.mu.Lock()
 			// In production you'd track last access time and delete old ones
 			// For now, simple clear to prevent memory leaks in long run
-			// Or better: don't clear everything, but this is simple PoC.
 			i.ips = make(map[string]*rate.Limiter)
 			i.mu.Unlock()
 		}
@@ -59,14 +62,27 @@ func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 func RateLimitMiddleware(limiter *IPRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract IP
-			ip, _, err := net.SplitHostPort(r.RemoteAddr)
-			if err != nil {
-				// Fallback if no port
-				ip = r.RemoteAddr
+
+			// 1. Safe Header Parsing for IP (Handles proxies like Nginx)
+			ip := ""
+			forwarded := r.Header.Get("X-Forwarded-For")
+			if forwarded != "" {
+				parts := strings.Split(forwarded, ",")
+				if len(parts) > 0 && parts[0] != "" {
+					ip = strings.TrimSpace(parts[0])
+				}
 			}
 
-			// Check Limit
+			// Fallback to RemoteAddr if no proxy header exists
+			if ip == "" {
+				var err error
+				ip, _, err = net.SplitHostPort(r.RemoteAddr)
+				if err != nil {
+					ip = r.RemoteAddr
+				}
+			}
+
+			// 2. Check Limit safely
 			l := limiter.GetLimiter(ip)
 			if !l.Allow() {
 				http.Error(w, "429 Too Many Requests", http.StatusTooManyRequests)
@@ -81,11 +97,35 @@ func RateLimitMiddleware(limiter *IPRateLimiter) func(http.Handler) http.Handler
 	}
 }
 
-// CORSMiddleware handles Cross-Origin Resource Sharing
+// CORSMiddleware handles Cross-Origin Resource Sharing & Panic Recovery & Safe Body reading
 func CORSMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+		// 1. Panic Recovery Middleware
+		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("⚠️  [REST API] Recovered from panic in handler: %v", err)
+				http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+
+		// 2. Safe Body Reading (Read and replace properly)
+		if r.Body != nil {
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err == nil {
+				// Restore the body so the underlying handler can read it safely
+				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			}
+		}
+
+		// 3. Safe Header Extraction
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+
 		// Set CORS Headers
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Origin, Accept, Authorization, X-CSRF-Token")
 
