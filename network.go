@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -47,6 +48,13 @@ type Server struct {
 	KnownPeers       map[string]string // PeerID string -> Addr
 	Mempool          map[string]Transaction
 	MempoolMux       sync.Mutex
+
+	// IBD (Initial Block Download) state
+	SyncingFrom    peer.ID        // Peer we are currently syncing from
+	IsSyncing      bool           // True while IBD is in progress
+	BlockBuffer    map[int]*Block // Height → Block buffer for ordered application
+	ExpectedBlocks int            // Total blocks expected during IBD
+	BlockBufferMux sync.Mutex
 }
 
 type discoveryNotifee struct {
@@ -207,6 +215,7 @@ func NewServer(cfg ServerConfig) *Server {
 		ValidatorPrivKey: cfg.PrivKey,
 		KnownPeers:       make(map[string]string),
 		Mempool:          make(map[string]Transaction),
+		BlockBuffer:      make(map[int]*Block),
 	}
 
 	// Set Stream Handler
@@ -376,7 +385,6 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 
 	// Duplicate Handshake Check
 	if _, ok := s.KnownPeers[peerID.String()]; ok {
-		// fmt.Printf("DEBUG: Ignored redundant Version from %s\n", ShortID(peerID.String()))
 		return
 	}
 
@@ -387,6 +395,14 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 	foreignerBestHeight := payload.BestHeight
 
 	if myBestHeight < foreignerBestHeight {
+		// Initialize IBD state
+		s.BlockBufferMux.Lock()
+		s.IsSyncing = true
+		s.SyncingFrom = peerID
+		s.BlockBuffer = make(map[int]*Block)
+		s.BlockBufferMux.Unlock()
+
+		fmt.Printf("📦 [IBD] Starting sync from %s (local: %d, remote: %d)\n", ShortID(peerID.String()), myBestHeight, foreignerBestHeight)
 		s.SendGetBlocks(peerID)
 	} else if myBestHeight > foreignerBestHeight {
 		s.SendVersion(peerID)
@@ -398,18 +414,42 @@ func (s *Server) HandleInv(request []byte, peerID peer.ID) {
 	dec := gob.NewDecoder(bytes.NewReader(request))
 	dec.Decode(&payload)
 
-	// fmt.Printf("Received inventory with %d %s\n", len(payload.Items), payload.Type)
-
 	if payload.Type == "block" {
-		blocksInTransit := payload.Items
-		for _, b := range blocksInTransit {
-			s.SendGetData(peerID, "block", b)
+		// Filter out blocks we already have
+		var needed [][]byte
+		for _, blockHash := range payload.Items {
+			_, err := s.Blockchain.GetBlock(blockHash)
+			if err != nil {
+				// Block not found locally → we need it
+				needed = append(needed, blockHash)
+			}
+		}
+
+		if len(needed) > 0 {
+			s.BlockBufferMux.Lock()
+			s.ExpectedBlocks = len(needed)
+			s.BlockBufferMux.Unlock()
+
+			fmt.Printf("📦 [IBD] Requesting %d missing blocks from %s\n", len(needed), ShortID(peerID.String()))
+			for _, b := range needed {
+				s.SendGetData(peerID, "block", b)
+			}
+		} else {
+			// All blocks already present, end IBD if active
+			s.BlockBufferMux.Lock()
+			if s.IsSyncing {
+				s.IsSyncing = false
+				fmt.Println("✅ [IBD] Already in sync.")
+			}
+			s.BlockBufferMux.Unlock()
 		}
 	}
 	if payload.Type == "tx" {
-		txID := payload.Items[0]
-		if s.Mempool[hex.EncodeToString(txID)].ID == nil {
-			s.SendGetData(peerID, "tx", txID)
+		if len(payload.Items) > 0 {
+			txID := payload.Items[0]
+			if s.Mempool[hex.EncodeToString(txID)].ID == nil {
+				s.SendGetData(peerID, "tx", txID)
+			}
 		}
 	}
 }
@@ -452,27 +492,88 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 	dec.Decode(&payload)
 
 	block := DeserializeBlock(payload.Block)
-	fmt.Printf("Received new block! Hash: %x\n", block.Hash)
 
-	// [SECURITY FIX] Validate UTXOs (Double-spend check) before processing the block
-	if !s.UTXOSet.ValidateBlockTransactions(block) {
-		fmt.Printf("⛔ Block %x rejected: Contains double-spends or invalid inputs.\n", block.Hash)
-		return
-	}
+	s.BlockBufferMux.Lock()
+	isSyncing := s.IsSyncing
+	s.BlockBufferMux.Unlock()
 
-	if s.Blockchain.AddBlock(block) {
-		s.UTXOSet.Update(block)
-		fmt.Printf("Block added %x and UTXO set updated.\n", block.Hash)
+	if isSyncing {
+		// === IBD MODE: Buffer blocks and apply in order ===
+		s.BlockBufferMux.Lock()
+		s.BlockBuffer[block.Height] = block
+		buffered := len(s.BlockBuffer)
+		expected := s.ExpectedBlocks
+		s.BlockBufferMux.Unlock()
+
+		fmt.Printf("📦 [IBD] Buffered block %d (hash: %x) [%d/%d]\n", block.Height, block.Hash[:4], buffered, expected)
+
+		// Check if we have all expected blocks
+		if buffered >= expected && expected > 0 {
+			s.applyBufferedBlocks()
+		}
 	} else {
-		fmt.Printf("Block discarded or duplicate: %x\n", block.Hash)
-	}
+		// === NORMAL MODE: Apply single block immediately ===
+		fmt.Printf("Received new block! Hash: %x Height: %d\n", block.Hash, block.Height)
 
-	if len(s.Mempool) > 0 {
-		for _, tx := range block.Transactions {
-			txID := hex.EncodeToString(tx.ID)
-			delete(s.Mempool, txID)
+		// Validate UTXOs (Double-spend check) before processing the block
+		if !s.UTXOSet.ValidateBlockTransactions(block) {
+			fmt.Printf("⛔ Block %x rejected: Contains double-spends or invalid inputs.\n", block.Hash)
+			return
+		}
+
+		if s.Blockchain.AddBlock(block) {
+			s.UTXOSet.Update(block)
+			fmt.Printf("✅ Block added %x and UTXO set updated.\n", block.Hash)
+		} else {
+			fmt.Printf("Block discarded or duplicate: %x\n", block.Hash)
+		}
+
+		// Clean mempool
+		if len(s.Mempool) > 0 {
+			for _, tx := range block.Transactions {
+				txID := hex.EncodeToString(tx.ID)
+				delete(s.Mempool, txID)
+			}
 		}
 	}
+}
+
+// applyBufferedBlocks sorts buffered blocks by height and applies them chronologically,
+// then performs a single UTXO reindex.
+func (s *Server) applyBufferedBlocks() {
+	s.BlockBufferMux.Lock()
+	defer func() {
+		// Reset IBD state
+		s.IsSyncing = false
+		s.BlockBuffer = make(map[int]*Block)
+		s.ExpectedBlocks = 0
+		s.BlockBufferMux.Unlock()
+	}()
+
+	// Collect and sort heights
+	heights := make([]int, 0, len(s.BlockBuffer))
+	for h := range s.BlockBuffer {
+		heights = append(heights, h)
+	}
+	sort.Ints(heights)
+
+	fmt.Printf("🔄 [IBD] Applying %d blocks in chronological order (height %d → %d)...\n",
+		len(heights), heights[0], heights[len(heights)-1])
+
+	applied := 0
+	for _, h := range heights {
+		block := s.BlockBuffer[h]
+		if s.Blockchain.AddBlock(block) {
+			applied++
+		}
+	}
+
+	fmt.Printf("✅ [IBD] Sync complete. Applied %d blocks.\n", applied)
+
+	// Full UTXO reindex from the now-complete chain
+	fmt.Println("🔄 [IBD] Rebuilding UTXO set (Reindex)...")
+	s.UTXOSet.Reindex()
+	fmt.Println("✅ [IBD] UTXO Reindex complete. Balances are now accurate.")
 }
 
 func (s *Server) HandleTx(request []byte, peerID peer.ID) {

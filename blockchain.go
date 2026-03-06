@@ -222,10 +222,10 @@ func (chain *Blockchain) GetBlock(blockHash []byte) (Block, error) {
 }
 
 // GetBlockHashes returns a list of hashes of all the blocks in the chain
-func (chain *Blockchain) GetBlockHashes() [][]byte { // TODO: Optimization?
+// Returns hashes in chronological order: Genesis → Tip
+func (chain *Blockchain) GetBlockHashes() [][]byte {
 	var blocks [][]byte
 
-	// We iterate backwards, so we'll get hashes from Tip to Genesis
 	iter := chain.Iterator()
 
 	for {
@@ -235,6 +235,11 @@ func (chain *Blockchain) GetBlockHashes() [][]byte { // TODO: Optimization?
 		if len(block.PrevBlockHash) == 0 {
 			break
 		}
+	}
+
+	// Reverse: iterator walks tip→genesis, but we need genesis→tip for IBD
+	for i, j := 0, len(blocks)-1; i < j; i, j = i+1, j-1 {
+		blocks[i], blocks[j] = blocks[j], blocks[i]
 	}
 
 	return blocks
@@ -347,32 +352,39 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
 	_, err := chain.GetBlock(block.Hash)
 	if err == nil {
-		// fmt.Printf("📦 [Blockchain] Block %x already exists. Skipping.\n", block.Hash[:4])
 		return false // Already processed
 	}
 
-	// 1. PoA Hardening: Strict Header Validation (Time, Drift, Proof)
+	// 1. PoA Hardening: Validate block linkage and header
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
-	var lastBlock Block
-	err = chain.Database.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("lh"))
+	// Validate PrevBlockHash linkage: the parent block MUST exist in our DB
+	// (except for genesis, which has an empty PrevBlockHash)
+	if len(block.PrevBlockHash) > 0 {
+		var prevBlock Block
+		err = chain.Database.View(func(txn *badger.Txn) error {
+			item, err := txn.Get(block.PrevBlockHash)
+			if err != nil {
+				return err
+			}
+			data, _ := item.ValueCopy(nil)
+			prevBlock = *DeserializeBlock(data)
+			return nil
+		})
 		if err != nil {
-			return err
+			fmt.Printf("⛔ AddBlock: Parent block %x not found in DB. Orphan rejected.\n", block.PrevBlockHash[:4])
+			return false
 		}
-		lastHash, _ := item.ValueCopy(nil)
-		item, err = txn.Get(lastHash)
-		if err != nil {
-			return err
-		}
-		data, _ := item.ValueCopy(nil)
-		lastBlock = *DeserializeBlock(data)
-		return nil
-	})
 
-	if err == nil {
-		if err := ValidateBlockHeader(block, &lastBlock); err != nil {
+		// Validate height continuity
+		if block.Height != prevBlock.Height+1 {
+			fmt.Printf("⛔ AddBlock: Height mismatch. Expected %d, got %d\n", prevBlock.Height+1, block.Height)
+			return false
+		}
+
+		// Strict header validation (timestamp monotonicity, drift, PoW) against the PARENT block
+		if err := ValidateBlockHeader(block, &prevBlock); err != nil {
 			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
 			return false
 		}
