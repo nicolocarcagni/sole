@@ -573,7 +573,7 @@ func (s *Server) applyBufferedBlocks() {
 	// Full UTXO reindex from the now-complete chain
 	fmt.Println("🔄 [IBD] Rebuilding UTXO set (Reindex)...")
 	s.UTXOSet.Reindex()
-	fmt.Println("✅ [IBD] UTXO Reindex complete. Balances are now accurate.")
+	fmt.Println("✅ [IBD] UTXO Reindex complete.")
 }
 
 func (s *Server) HandleTx(request []byte, peerID peer.ID) {
