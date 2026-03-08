@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            ext: .tar.xz
+          - goos: darwin
+            goarch: arm64
+            ext: .tar.xz
+          - goos: linux
+            goarch: amd64
+            ext: .tar.xz
+          - goos: windows
+            goarch: amd64
+            ext: .zip
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Get Tag Version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+
+      - name: Build Binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            go build -ldflags="-s -w" -o sole-cli.exe .
+          else
+            go build -ldflags="-s -w" -o sole-cli .
+          fi
+
+      - name: Package Release
+        run: |
+          ARCHIVE_NAME="sole-cli_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}${{ matrix.ext }}"
+          if [[ "${{ matrix.ext }}" == ".zip" ]]; then
+            zip "$ARCHIVE_NAME" sole-cli.exe LICENSE README.md
+          else
+            tar -cJf "$ARCHIVE_NAME" sole-cli LICENSE README.md
+          fi
+          echo "ARCHIVE_PATH=$ARCHIVE_NAME" >> $GITHUB_ENV
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ARCHIVE_PATH }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
