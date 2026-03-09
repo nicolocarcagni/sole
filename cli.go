@@ -41,6 +41,8 @@ var (
 	fromFlag      string
 	toFlag        string
 	amountFlag    float64
+	feeFlag       float64
+	memoFlag      string
 	portFlag      int
 	minerFlag     string
 	apiPortFlag   int
@@ -82,7 +84,7 @@ func printUsage(cmd *cobra.Command, args []string) {
   ____) | |__| | |____| |____ 
  |_____/ \____/|______|______|
 ` + ColorReset)
-	fmt.Println(ColorBold + "   SOLE Blockchain CLI v1.0" + ColorReset)
+	fmt.Println(ColorBold + "   SOLE Blockchain CLI v2.0" + ColorReset)
 	fmt.Println("   (c) 2026 Università del Salento")
 	fmt.Println()
 
@@ -119,7 +121,7 @@ func printUsage(cmd *cobra.Command, args []string) {
 	// 4. TX
 	fmt.Fprintln(w, ColorYellow+"4. TRANSACTIONS (tx)"+ColorReset)
 	fmt.Fprintln(w, "  "+ColorGreen+"send"+ColorReset+"\tSends funds between wallets.")
-	fmt.Fprintln(w, "\t"+ColorCyan+"Flags:"+ColorReset+" --from, --to, --amount, --dry-run")
+	fmt.Fprintln(w, "\t"+ColorCyan+"Flags:"+ColorReset+" --from, --to, --amount, --fee, --memo, --dry-run")
 	fmt.Fprintln(w, "")
 
 	w.Flush()
@@ -257,6 +259,8 @@ func init() {
 	txSendCmd.Flags().StringVar(&fromFlag, "from", "", "Source address")
 	txSendCmd.Flags().StringVar(&toFlag, "to", "", "Destination address")
 	txSendCmd.Flags().Float64Var(&amountFlag, "amount", 0, "Amount to send")
+	txSendCmd.Flags().Float64Var(&feeFlag, "fee", 0.001, "Transaction fee in SOLE")
+	txSendCmd.Flags().StringVar(&memoFlag, "memo", "", "Short public transaction memo (max 80 chars)")
 	txSendCmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "Print transaction hex without sending")
 	txSendCmd.MarkFlagRequired("from")
 	txSendCmd.MarkFlagRequired("to")
@@ -507,9 +511,10 @@ func send(cmd *cobra.Command, args []string) {
 
 	// Conversion: SOLE (Float) -> Photons (Int64)
 	amountInt := int64(amountFlag * 100000000)
-	fmt.Printf("💸 Sending: %.8f SOLE (%d Photons)\n", amountFlag, amountInt)
+	feeInt := int64(feeFlag * 100000000)
+	fmt.Printf("💸 Sending: %.8f SOLE (%d Photons) | Fee: %.8f SOLE (%d Photons)\n", amountFlag, amountInt, feeFlag, feeInt)
 
-	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, &UTXOSet)
+	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, feeInt, memoFlag, &UTXOSet)
 
 	if dryRunFlag {
 		fmt.Printf("Dry-Run: Transaction Hex:\n%x\n", tx.Serialize())

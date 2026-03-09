@@ -37,6 +37,11 @@ func (out *TxOutput) IsLockedWithKey(pubKeyHash []byte) bool {
 	return bytes.Equal(out.PubKeyHash, pubKeyHash)
 }
 
+// IsOPReturn checks if the output is a zero-value metadata payload
+func (out *TxOutput) IsOPReturn() bool {
+	return out.Value == 0
+}
+
 // NewTxOutput creates a new TXOutput
 func NewTxOutput(value int64, address string) *TxOutput {
 	txo := &TxOutput{value, nil}
@@ -359,7 +364,7 @@ func NewCoinbaseTX(to, data string, amount int64) *Transaction {
 }
 
 // NewUTXOTransaction creates a new transaction
-func NewUTXOTransaction(from, to string, amount int64, utxoSet *UTXOSet) *Transaction {
+func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet) *Transaction {
 	var inputs []TxInput
 	var outputs []TxOutput
 
@@ -374,10 +379,13 @@ func NewUTXOTransaction(from, to string, amount int64, utxoSet *UTXOSet) *Transa
 	}
 	pubKeyHash := HashPubKey(wallet.PublicKey)
 
-	acc, validOutputs := utxoSet.FindSpendableOutputs(pubKeyHash, amount)
+	// We need enough to cover both the amount and the fee
+	totalRequired := amount + fee
 
-	if acc < amount {
-		fmt.Printf("⛔ ERRORE: Fondi insufficienti. Disponibili: %d, Richiesti: %d\n", acc, amount)
+	acc, validOutputs := utxoSet.FindSpendableOutputs(pubKeyHash, totalRequired)
+
+	if acc < totalRequired {
+		fmt.Printf("⛔ ERRORE: Fondi insufficienti. Disponibili: %d, Richiesti: %d (Importo: %d + Fee: %d)\n", acc, totalRequired, amount, fee)
 		os.Exit(1)
 		// return nil // unreachable
 	}
@@ -394,10 +402,20 @@ func NewUTXOTransaction(from, to string, amount int64, utxoSet *UTXOSet) *Transa
 		}
 	}
 
+	// Add OP_RETURN memo if provided
+	if memo != "" {
+		if len(memo) > 80 {
+			memo = memo[:80] // Truncate to standard OP_RETURN 80 byte limit
+		}
+		outputs = append(outputs, TxOutput{0, []byte(memo)})
+	}
+
+	// The primary destination output
 	outputs = append(outputs, *NewTxOutput(amount, to))
 
-	if acc > amount {
-		outputs = append(outputs, *NewTxOutput(acc-amount, from))
+	// The change output (returned to sender)
+	if acc > totalRequired {
+		outputs = append(outputs, *NewTxOutput(acc-totalRequired, from))
 	}
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}

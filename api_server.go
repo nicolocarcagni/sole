@@ -156,8 +156,15 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 
 	// Outputs
 	for _, vout := range tx.Vout {
+		var receiverAddr string
+		if vout.IsOPReturn() {
+			receiverAddr = "OP_RETURN: " + string(vout.PubKeyHash)
+		} else {
+			receiverAddr = PubKeyHashToAddress(vout.PubKeyHash)
+		}
+
 		outputs = append(outputs, JSONOutput{
-			ReceiverAddress: PubKeyHashToAddress(vout.PubKeyHash),
+			ReceiverAddress: receiverAddr,
 			Value:           vout.Value,
 			ValueSole:       float64(vout.Value) / 100000000.0,
 		})
@@ -383,8 +390,8 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	rs.P2P.MempoolMux.Lock()
 	defer rs.P2P.MempoolMux.Unlock()
 
-	if rs.P2P.Mempool[txID].ID == nil {
-		rs.P2P.Mempool[txID] = tx
+	if rs.P2P.Mempool[txID].Tx.ID == nil {
+		rs.P2P.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
 		fmt.Printf("API: Transazione aggiunta alla Mempool: %s\n", txID)
 
 		// Broadcast Inv

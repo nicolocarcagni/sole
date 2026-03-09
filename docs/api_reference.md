@@ -105,6 +105,11 @@ Extracts full input, output array bindings, and value routes (both Photons and f
           "receiver_address": "1SoLErUCu4pL7qrTAouiY4TfWwzAwBsnn",
           "value": 499900000000000,
           "value_sole": 4999000.0
+        },
+        {
+          "receiver_address": "OP_RETURN: Invoice #812",
+          "value": 0,
+          "value_sole": 0.0
         }
       ],
       "timestamp": 1708816000

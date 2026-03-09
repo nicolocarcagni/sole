@@ -14,9 +14,10 @@ The SOLE network operates as a Hybrid P2P Network, prioritizing high throughput 
 
 *   **Consensus**: Proof of Authority (PoA). A deterministic set of authorized validators (e.g., University Administration, Faculty) securely signs blocks.
 *   **Data Structure**: Features a Persistent UTXO Set backed by BadgerDB for strict double-spend prevention and $O(1)$ balance verification.
-*   **Tokenomics**: Hard-capped at 19.55 Million SOLE, featuring a deflationary emission curve halving every 195,500 blocks. 
+*   **Economic Market**: Utilizes implicit UTXO fees (`Sum(Inputs) - Sum(Outputs)`), descending mempool priority sorting, and dynamic miner rewards guarded by strict inflation resistance protocols.
+*   **Mempool Integrity**: Features an autonomous 1-hour internal Time-To-Live (TTL) background garbage collector bypassing runtime timestamp spoofing attempts.
+*   **On-Chain Metadata**: Natively supports appending 80-byte `OP_RETURN` textual payloads via unspendable 0-value outputs to transactions, explicitly bypassing cache bloat.
 *   **Networking**: Operates on a modular `libp2p` stack supporting DHT-based peer discovery, NAT traversal, and automatic mDNS for LAN synchronization.
-*   **Interoperability**: Exposes a robust JSON REST API for seamless integration with external wallets and blockchain explorers.
 
 ## Prerequisites
 
@@ -24,9 +25,13 @@ The SOLE network operates as a Hybrid P2P Network, prioritizing high throughput 
 
 ## Quickstart
 
-### Build the Node
+### Pre-Compiled Binaries
 
-Clone the repository and compile the CLI executable:
+You can ownload them directly from the Releases page.
+
+### Build the Node from Source
+
+Clone the repository and compile the CLI executable manually:
 
 ```bash
 git clone https://github.com/nicolocarcagni/sole.git

@@ -39,6 +39,15 @@ The `UTXOSet` performs comprehensive validation covering multi-topology attack v
 ### Replay Protection
 All transactions instantiate an intrinsic UNIX Timestamp (`int64`), guaranteeing uniqueness for structurally identical spending patterns and rendering cross-chain or delayed replay broadcasting ineffective.
 
+### Transaction Fee Market
+Fees are calculated implicitly via localized UTXO math: `Fee = Sum(Inputs) - Sum(Outputs)`. Transactions residing in the Mempool are securely prioritized by descending absolute fee, incentivizing miners. The resulting Coinbase creation restricts the subsidy claim exactly to `Block Subsidy + Total Collected Fees`, deterring hyper-inflationary consensus breaches.
+
+### Mempool Integrity (TTL)
+To prevent unmined zero-fee or orphaned transactions from leaking node RAM permanently, SOLE employs an internal background Garbage Collector (GC). Mempool structures natively attach an anti-spoofable internal timestamp (`MempoolItem`) and periodically evict structures persisting beyond a 1-hour Time-To-Live (TTL).
+
+### Metadata (OP_RETURN)
+Nodes natively support binding up to 80-byte UTF-8 string payloads explicitly inside unspendable 0-value `PubKeyHash` outputs. The validator logic intercepts these payloads via `IsOPReturn()` calculations and explicitly denies them induction into the active caching vectors of BadgerDB, securely recording the memos in the immutable block history without bloating active ledger memory.
+
 ## 5. Merkle Tree Implementation
 
 Integrity at the block level relies on a full **Binary Merkle Tree**. 
@@ -68,3 +77,12 @@ The economic issuance dynamically mimics deflationary issuance matrices.
 
 Distributed consensus operates over the **Libp2p** protocol stack (`/sole/1.0.0`). 
 Local network traversal leverages `mDNS` multicasting for transparent LAN peering. Extranet operations synchronize through hardcoded WAN bootnodes establishing persistent `TCP/QUIC` socket tunnels through standard NAT barriers. Protocol state is handled via standardized network structures (`Version`, `Inv`, `GetData`, `Block`, `Tx`).
+
+## 9. Ecosystem & UX
+
+Complementing the core Go CLI and daemon is **Swallet**, a modern Python-based desktop application bridging interactions via the node's JSON REST API. 
+
+*   **Libadwaita Design**: Fluid GTK4 layouts adhering strictly to GNOME Human Interface Guidelines (HIG).
+*   **State Telemetry**: Multi-Wallet support engineered with seamless state teardown routines.
+*   **Transaction Calculus**: Dynamic UTXO traversal accurately identifying "Sender" and "Recipient" alignments natively from disparate cryptographic inputs, avoiding structural indexing limits overhead.
+*   **Encrypted Exports**: Core Pillow/Qrcode integrations synthesizing cold-storage paper wallets protected by master password gating flows.

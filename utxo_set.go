@@ -37,6 +37,9 @@ func (u UTXOSet) Reindex() {
 	err = db.Update(func(txn *badger.Txn) error {
 		for txId, outs := range UTXO {
 			for outIdx, out := range outs.Outputs {
+				if out.IsOPReturn() {
+					continue
+				}
 				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txId, outIdx)
 				err := txn.Set([]byte(key), SerializeUTXO(out))
 				if err != nil {
@@ -75,6 +78,9 @@ func (u UTXOSet) Update(block *Block) {
 
 			// Add new outputs
 			for outIdx, out := range tx.Vout {
+				if out.IsOPReturn() {
+					continue
+				}
 				txID := hex.EncodeToString(tx.ID)
 				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
 
@@ -225,10 +231,16 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 	// Keep track of outputs created in this block (mempool chaining)
 	createdInBlock := make(map[string]bool)
 
-	// First pass: Record all outputs created in this block
+	// Keep track of fees for Coinbase validation
+	totalFees := int64(0)
+
+	// First pass: Record all standard outputs created in this block
 	for _, tx := range block.Transactions {
 		txID := hex.EncodeToString(tx.ID)
-		for outIdx := range tx.Vout {
+		for outIdx, out := range tx.Vout {
+			if out.IsOPReturn() {
+				continue
+			}
 			key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
 			createdInBlock[key] = true
 		}
@@ -239,6 +251,15 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 			if tx.IsCoinbase() {
 				continue
 			}
+			
+			txInputTotal := int64(0)
+			txOutputTotal := int64(0)
+
+			// Calculate outputs total
+			for _, out := range tx.Vout {
+				txOutputTotal += out.Value
+			}
+
 			for _, vin := range tx.Vin {
 				txID := hex.EncodeToString(vin.Txid)
 				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
@@ -253,11 +274,22 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 				// 2. Check if the output was created in THIS block
 				if createdInBlock[key] {
 					spentInBlock[key] = true
+					// For fee calculation, find the output value in the tx that created it
+					// We find the tx within this block
+					for _, intraTx := range block.Transactions {
+						if hex.EncodeToString(intraTx.ID) == txID {
+							matchedOut := intraTx.Vout[vin.Vout]
+							if !matchedOut.IsOPReturn() {
+								txInputTotal += matchedOut.Value
+							}
+							break
+						}
+					}
 					continue // Valid intra-block spend
 				}
 
 				// 3. Otherwise, it MUST exist in the UTXO database
-				_, err := txn.Get([]byte(key))
+				item, err := txn.Get([]byte(key))
 				if err == badger.ErrKeyNotFound {
 					fmt.Printf("⛔ [UTXOSet] Invalid input! UTXO not found: %s\n", key)
 					valid = false
@@ -266,10 +298,43 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 					return err
 				}
 
+				// Read output to get the input value for fee calculation
+				v, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
+				out := DeserializeUTXO(v)
+				txInputTotal += out.Value
+
 				// Mark as spent to prevent double-spending in subsequent transactions in this block
 				spentInBlock[key] = true
 			}
+
+			// Add to total block fees
+			fee := txInputTotal - txOutputTotal
+			if fee < 0 {
+				fmt.Printf("⛔ [UTXOSet] Invalid transaction: Fees cannot be negative (%d)\n", fee)
+				valid = false
+				return nil
+			}
+			totalFees += fee
 		}
+
+		// 4. Validate Coinbase Block Reward + Fees Limit
+		// Ensure that the coinbase output does not exceed the allowed subsidy + collected fees
+		if len(block.Transactions) > 0 && block.Transactions[0].IsCoinbase() {
+			cbTx := block.Transactions[0]
+			coinbaseValue := cbTx.Vout[0].Value
+			allowedSubsidy := u.Blockchain.GetBlockSubsidy(block.Height)
+			maxAllowedReward := allowedSubsidy + totalFees
+
+			if coinbaseValue > maxAllowedReward {
+				fmt.Printf("⛔ [UTXOSet] Invalid block: Coinbase reward %d exceeds max allowed %d (Subsidy: %d + Fees: %d)\n", coinbaseValue, maxAllowedReward, allowedSubsidy, totalFees)
+				valid = false
+				return nil
+			}
+		}
+
 		return nil
 	})
 
@@ -279,4 +344,56 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 	}
 
 	return valid
+}
+
+// CalculateFee calculates the implicit fee of a transaction: Sum(Inputs) - Sum(Outputs)
+func (u UTXOSet) CalculateFee(tx *Transaction) (int64, error) {
+	if tx.IsCoinbase() {
+		return 0, nil
+	}
+
+	var inputTotal int64
+	var outputTotal int64
+
+	for _, out := range tx.Vout {
+		outputTotal += out.Value
+	}
+
+	db := u.Blockchain.Database
+	err := db.View(func(txn *badger.Txn) error {
+		for _, vin := range tx.Vin {
+			txID := hex.EncodeToString(vin.Txid)
+			key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
+
+			item, err := txn.Get([]byte(key))
+			if err == badger.ErrKeyNotFound {
+				// Mempool chaining: the input might not be in DB yet if it's spending an unconfirmed tx.
+				// In CalculateFee (used primarily before mining/mempool), we might get here.
+				// We fall back to the Blockchain context to find it.
+				prevTx, err := u.Blockchain.FindTransaction(vin.Txid)
+				if err != nil {
+					return fmt.Errorf("input tx %s not found in DB or Mempool", txID)
+				}
+				inputTotal += prevTx.Vout[vin.Vout].Value
+				continue
+			} else if err != nil {
+				return err
+			}
+
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			out := DeserializeUTXO(v)
+			inputTotal += out.Value
+		}
+		return nil
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	fee := inputTotal - outputTotal
+	return fee, nil
 }

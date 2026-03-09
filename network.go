@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	protocolID         = "/sole/1.0.0"
+	protocolID         = "/sole/2.0.0"
 	discoveryNamespace = "sole_p2p"
 )
 
@@ -38,6 +38,12 @@ var (
 	}
 )
 
+// MempoolItem wraps a transaction with its arrival time for TTL eviction
+type MempoolItem struct {
+	Tx      Transaction
+	AddedAt int64
+}
+
 // Server represents the P2P server
 type Server struct {
 	Host             host.Host
@@ -46,7 +52,7 @@ type Server struct {
 	MinerAddr        string
 	ValidatorPrivKey *ecdsa.PrivateKey
 	KnownPeers       map[string]string // PeerID string -> Addr
-	Mempool          map[string]Transaction
+	Mempool          map[string]MempoolItem
 	MempoolMux       sync.Mutex
 
 	// IBD (Initial Block Download) state
@@ -80,7 +86,6 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 			return
 		} else if contains(errMsg, "i/o timeout") || contains(errMsg, "no good addresses") {
 			// Debug level for network noise
-			// fmt.Printf("DEBUG: Connect timeout %s\n", ShortID(pi.ID.String()))
 		} else if contains(errMsg, "unexpected handshake message") || contains(errMsg, "tls") {
 			fmt.Printf("⚠️  [P2P] TLS Error connecting to %s: %s\n", ShortID(pi.ID.String()), err)
 		} else {
@@ -96,13 +101,7 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 
 // Helper to check substring
 func contains(s, substr string) bool {
-	// Simple string check
-	// We need "strings" package if we use strings.Contains
-	// But since we didn't import "strings", let's use the buffer way or just add import.
-	// Actually, "strings" is standard. I should add it to imports.
-	// But to save steps, I implemented it with bytes above.
-	// Wait, in previous step I used bytes.Contains([]byte(s), ...).
-	// bytes package IS imported.
+	// Simple string check using bytes package
 	return bytes.Contains([]byte(s), []byte(substr))
 }
 
@@ -155,7 +154,6 @@ func LoadOrGenerateNodeKey(keyFile string) (crypto.PrivKey, error) {
 }
 
 // NewServer initializes the P2P server
-// NewServer initializes the P2P server
 func NewServer(cfg ServerConfig) *Server {
 	// Use persistent identity
 	priv := cfg.NodeKey
@@ -165,7 +163,6 @@ func NewServer(cfg ServerConfig) *Server {
 		libp2p.ListenAddrStrings(listenAddr),
 		libp2p.Identity(priv),
 		// Enable NAT traversal
-		// libp2p.NATPortMap(), // Optional but good practice
 	}
 
 	// Handle Public IP/DNS Announcement (NAT Traversal)
@@ -214,7 +211,7 @@ func NewServer(cfg ServerConfig) *Server {
 		MinerAddr:        cfg.MinerAddr,
 		ValidatorPrivKey: cfg.PrivKey,
 		KnownPeers:       make(map[string]string),
-		Mempool:          make(map[string]Transaction),
+		Mempool:          make(map[string]MempoolItem),
 		BlockBuffer:      make(map[int]*Block),
 	}
 
@@ -303,7 +300,7 @@ func (s *Server) Bootstrap(bootnodes []string) {
 // Start runs the P2P server loop (blocking)
 func (s *Server) Start() {
 	fmt.Println("Waiting for connections...")
-	// Loop removed to avoid spam. Handshake is now event-driven in HandlePeerFound.
+
 	select {} // block forever
 }
 
@@ -316,7 +313,7 @@ func (s *Server) ReadData(rw *bufio.ReadWriter, peerID peer.ID) {
 	// Read all data until EOF (stream closed)
 	payload, err := io.ReadAll(rw)
 	if err != nil {
-		fmt.Println("Error reading stream:", err)
+		log.Printf("Error reading stream [%s]: %v", peerID.String(), err)
 		return
 	}
 
@@ -447,7 +444,7 @@ func (s *Server) HandleInv(request []byte, peerID peer.ID) {
 	if payload.Type == "tx" {
 		if len(payload.Items) > 0 {
 			txID := payload.Items[0]
-			if s.Mempool[hex.EncodeToString(txID)].ID == nil {
+			if s.Mempool[hex.EncodeToString(txID)].Tx.ID == nil {
 				s.SendGetData(peerID, "tx", txID)
 			}
 		}
@@ -477,19 +474,22 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	if payload.Type == "tx" {
 		txID := hex.EncodeToString(payload.ID)
 		fmt.Printf("📦 [P2P] Data Request (Tx) | Hash: %s... | Peer: %s\n", txID[:8], ShortID(peerID.String()))
-		tx, ok := s.Mempool[txID]
+		item, ok := s.Mempool[txID]
 		if !ok {
 			fmt.Printf("⚠️  Object (Tx) not found in Mempool: %s\n", txID)
 			return
 		}
-		s.SendTx(peerID, &tx)
+		s.SendTx(peerID, &item.Tx)
 	}
 }
 
 func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 	var payload BlockMsg
 	dec := gob.NewDecoder(bytes.NewReader(request))
-	dec.Decode(&payload)
+	if err := dec.Decode(&payload); err != nil {
+		log.Printf("Gob decode error inside HandleBlock: %v", err)
+		return
+	}
 
 	block := DeserializeBlock(payload.Block)
 
@@ -577,9 +577,18 @@ func (s *Server) applyBufferedBlocks() {
 }
 
 func (s *Server) HandleTx(request []byte, peerID peer.ID) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("⚡ Panic in HandleTx: %v", r)
+		}
+	}()
+
 	var payload TxMsg
 	dec := gob.NewDecoder(bytes.NewReader(request))
-	dec.Decode(&payload)
+	if err := dec.Decode(&payload); err != nil {
+		log.Printf("Gob decode error inside HandleTx: %v", err)
+		return
+	}
 
 	txData := payload.Transaction
 	tx := DeserializeTransaction(txData)
@@ -587,26 +596,35 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	s.MempoolMux.Lock()
 	defer s.MempoolMux.Unlock()
 
-	if s.Mempool[hex.EncodeToString(tx.ID)].ID == nil {
-		fmt.Printf("New Transaction in Mempool: %x\n", tx.ID)
-		s.Mempool[hex.EncodeToString(tx.ID)] = tx
 
-		// Propagate
-		peers := s.Host.Network().Peers()
-		for _, p := range peers {
-			if p != peerID {
-				s.SendInv(p, "tx", [][]byte{tx.ID})
-			}
-		}
-	} else {
-		// fmt.Printf("Transazione %x già in mempool\n", tx.ID)
+	txID := hex.EncodeToString(tx.ID)
+	if s.Mempool[txID].Tx.ID != nil {
+		return
 	}
 
-	// Mine if Miner (and has valid privKey)
-	// s.AttemptMine() // Removed for Periodic Mining
+
+	fee, err := s.UTXOSet.CalculateFee(&tx)
+	if err != nil {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: Cannot calculate fee: %s\n", tx.ID, err)
+		return
+	}
+	if fee < 0 {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: Negative fee (%d)\n", tx.ID, fee)
+		return
+	}
+
+	fmt.Printf("New Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
+	s.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
+
+
+	peers := s.Host.Network().Peers()
+	for _, p := range peers {
+		if p != peerID {
+			s.SendInv(p, "tx", [][]byte{tx.ID})
+		}
+	}
 }
 
-// StartMiningLoop periodically checks mempool to mine new blocks
 func (s *Server) StartMiningLoop() {
 	if s.MinerAddr == "" {
 		return
@@ -619,8 +637,14 @@ func (s *Server) StartMiningLoop() {
 	}
 }
 
-// AttemptMine tries to mine a block if conditions are met
 func (s *Server) AttemptMine() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("⚡ Panic in AttemptMine: %v", r)
+			// Ensure map isn't locked indefinitely if it panics mid-mux
+		}
+	}()
+
 	if s.MinerAddr == "" || s.ValidatorPrivKey == nil {
 		return
 	}
@@ -633,34 +657,61 @@ func (s *Server) AttemptMine() {
 	}
 
 	fmt.Println("Forging new block with mempool transactions...")
-	var txs []*Transaction
+
+	type txWithFee struct {
+		tx  *Transaction
+		fee int64
+	}
+
+	var validTxs []txWithFee
+	var totalFees int64
+
 	for id := range s.Mempool {
-		tx := s.Mempool[id]
+		item := s.Mempool[id]
+		tx := item.Tx
 		if s.Blockchain.VerifyTransaction(&tx) {
-			txs = append(txs, &tx)
+			fee, err := s.UTXOSet.CalculateFee(&tx)
+			if err == nil && fee >= 0 {
+				validTxs = append(validTxs, txWithFee{tx: &tx, fee: fee})
+			} else {
+				// Invalid fee (or dependencies missing)
+				delete(s.Mempool, id)
+			}
 		} else {
 			delete(s.Mempool, id) // Clear invalid tx
 		}
 	}
 
-	if len(txs) == 0 {
+	if len(validTxs) == 0 {
 		fmt.Println("All transactions in mempool are invalid.")
 		return
 	}
 
-	// Calculate Dynamic Block Subsidy (Tokenomics)
+
+	sort.Slice(validTxs, func(i, j int) bool {
+		return validTxs[i].fee > validTxs[j].fee
+	})
+
+	var txs []*Transaction
+	for _, twf := range validTxs {
+		txs = append(txs, twf.tx)
+		totalFees += twf.fee
+	}
+
+
 	bestHeight := s.Blockchain.GetBestHeight()
 	nextHeight := bestHeight + 1
 	subsidy := s.Blockchain.GetBlockSubsidy(nextHeight)
 
-	// Add Coinbase for Miner
-	cbTx := NewCoinbaseTX(s.MinerAddr, "", subsidy) // Dynamic Reward
+
+	totalReward := subsidy + totalFees
+	cbTx := NewCoinbaseTX(s.MinerAddr, "", totalReward)
 
 	// [SECURITY FIX] Ensure the set of transactions doesn't contain double-spends
 	prospectiveBlock := &Block{Transactions: append([]*Transaction{cbTx}, txs...)}
 	if !s.UTXOSet.ValidateBlockTransactions(prospectiveBlock) {
 		fmt.Println("⚠️  Mempool contains conflicting transactions. Clearing Mempool.")
-		s.Mempool = make(map[string]Transaction)
+		s.Mempool = make(map[string]MempoolItem)
 		return
 	}
 
@@ -669,12 +720,12 @@ func (s *Server) AttemptMine() {
 	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
 	s.UTXOSet.Update(newBlock)
 
-	// Clear Mempool
-	s.Mempool = make(map[string]Transaction)
 
-	fmt.Printf("New block forged: %x (UTXO updated)\n", newBlock.Hash)
+	s.Mempool = make(map[string]MempoolItem)
 
-	// Broadcast new block
+	fmt.Printf("New block forged: %x (Reward: %d | Sub: %d + Fee: %d)\n", newBlock.Hash, totalReward, subsidy, totalFees)
+
+
 	peers := s.Host.Network().Peers()
 	for _, p := range peers {
 		s.SendInv(p, "block", [][]byte{newBlock.Hash})

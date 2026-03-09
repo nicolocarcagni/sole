@@ -138,8 +138,10 @@ Generates a new UTXO transaction, signs the inputs using the sender's private ke
     *   `--to <ADDR>`: Destination address.
     *   `--amount <FLOAT>`: Quantity of SOLE tokens to transfer (decimal precision supported).
 *   **Optional Flags:**
+    *   `--fee <FLOAT>`: Implicit transaction fee awarded to miners (Default: `0.001` SOLE).
+    *   `--memo <STRING>`: Max 80-byte public message integrated via a 0-value `OP_RETURN` payload.
     *   `--dry-run`: Constructs and signs the transaction hex but does not broadcast it to the network.
 *   **Example:**
     ```bash
-    ./sole-cli tx send --from 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL --to 1SoLErUCu4pL7qrTAouiY4TfWwzAwBsnn --amount 5.5
+    ./sole-cli tx send --from 1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL --to 1SoLErUCu4pL7qrTAouiY4TfWwzAwBsnn --amount 5.5 --fee 0.005 --memo "Lunch payment"
     ```
