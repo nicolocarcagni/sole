@@ -76,7 +76,9 @@ type TipResponse struct {
 }
 
 type TxSendRequest struct {
-	Hex string `json:"hex"` // Hex encoded transaction bytes
+	Hex  string  `json:"hex"`
+	Fee  float64 `json:"fee"`
+	Memo string  `json:"memo"`
 }
 
 type SuccessResponse struct {
@@ -93,7 +95,8 @@ type JSONTransactionResponse struct {
 	ID        string       `json:"id"`
 	Inputs    []JSONInput  `json:"inputs"`
 	Outputs   []JSONOutput `json:"outputs"`
-	Timestamp int64        `json:"timestamp"` // Placeholder (block time if available, or 0)
+	Timestamp int64        `json:"timestamp"`
+	Memo      string       `json:"memo,omitempty"`
 }
 
 type JSONInput struct {
@@ -170,11 +173,21 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 		})
 	}
 
+	// Extract memo from OP_RETURN outputs
+	var memo string
+	for _, vout := range tx.Vout {
+		if vout.IsOPReturn() {
+			memo = string(vout.PubKeyHash)
+			break
+		}
+	}
+
 	return JSONTransactionResponse{
 		ID:        hex.EncodeToString(tx.ID),
 		Inputs:    inputs,
 		Outputs:   outputs,
 		Timestamp: tx.Timestamp,
+		Memo:      memo,
 	}
 }
 
@@ -377,8 +390,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	// Deserialize
 	tx := DeserializeTransaction(txBytes)
 
-	// Basic Validation (Proof of concept)
-	// In production, we'd verify signatures and UTXOs more strictly before mempool
+	// Basic Validation
 	if rs.P2P.Blockchain.VerifyTransaction(&tx) == false {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction invalid"})
 		return
