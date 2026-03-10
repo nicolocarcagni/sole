@@ -404,7 +404,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 
 	if rs.P2P.Mempool[txID].Tx.ID == nil {
 		rs.P2P.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
-		fmt.Printf("API: Transazione aggiunta alla Mempool: %s\n", txID)
+		fmt.Printf("API: Transaction added to Mempool: %s\n", txID)
 
 		// Broadcast Inv
 		peers := rs.P2P.Host.Network().Peers()
