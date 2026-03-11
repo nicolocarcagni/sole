@@ -348,7 +348,7 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 }
 
 // AddBlock adds a received block to the blockchain after PoA validation
-func (chain *Blockchain) AddBlock(block *Block) bool {
+func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transaction) bool {
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
 	_, err := chain.GetBlock(block.Hash)
 	if err == nil {
@@ -359,8 +359,6 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
-	// Validate PrevBlockHash linkage: the parent block MUST exist in our DB
-	// (except for genesis, which has an empty PrevBlockHash)
 	if len(block.PrevBlockHash) > 0 {
 		var prevBlock Block
 		err = chain.Database.View(func(txn *badger.Txn) error {
@@ -377,13 +375,11 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 			return false
 		}
 
-		// Validate height continuity
 		if block.Height != prevBlock.Height+1 {
 			fmt.Printf("⛔ AddBlock: Height mismatch. Expected %d, got %d\n", prevBlock.Height+1, block.Height)
 			return false
 		}
 
-		// Strict header validation (timestamp monotonicity, drift, PoW) against the PARENT block
 		if err := ValidateBlockHeader(block, &prevBlock); err != nil {
 			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
 			return false
@@ -396,8 +392,8 @@ func (chain *Blockchain) AddBlock(block *Block) bool {
 		return false
 	}
 
-	// 3. Verify all internal transaction signatures (including intra-block)
-	if !chain.VerifyBlockTransactions(block) {
+	// 3. Verify all internal transaction signatures (including intra-block + cross-block cache)
+	if !chain.VerifyBlockTransactions(block, txCache...) {
 		fmt.Println("AddBlock: Block rejected - invalid transaction signatures")
 		return false
 	}
@@ -698,7 +694,7 @@ func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateK
 	tx.Sign(privKey, prevTXs)
 }
 
-// VerifyTransaction verifies transaction input signatures
+// VerifyTransaction verifies transaction input signatures (DB-only lookup)
 func (chain *Blockchain) VerifyTransaction(tx *Transaction) bool {
 	if tx.IsCoinbase() {
 		return true
@@ -709,7 +705,6 @@ func (chain *Blockchain) VerifyTransaction(tx *Transaction) bool {
 	for _, vin := range tx.Vin {
 		prevTX, err := chain.FindTransaction(vin.Txid)
 		if err != nil {
-			// [SECURITY FIX] Stop execution and invalidate transaction gracefully.
 			fmt.Printf("⛔ [VerifyTransaction] Rejected: Parent transaction %x does not exist.\n", vin.Txid)
 			return false
 		}
@@ -719,16 +714,64 @@ func (chain *Blockchain) VerifyTransaction(tx *Transaction) bool {
 	return tx.Verify(prevTXs)
 }
 
-// VerifyBlockTransactions validates all transaction signatures in a block,
-// correctly handling intra-block dependencies (mempool chaining).
-func (chain *Blockchain) VerifyBlockTransactions(block *Block) bool {
-	// 1. Build a map of transactions inside this block for quick intra-block lookup
-	blockTxs := make(map[string]*Transaction)
-	for _, tx := range block.Transactions {
-		blockTxs[hex.EncodeToString(tx.ID)] = tx
+// FindTransactionWithMempool checks the mempool first, then falls back to the blockchain DB.
+func (chain *Blockchain) FindTransactionWithMempool(ID []byte, mempool map[string]MempoolItem) (Transaction, error) {
+	txID := hex.EncodeToString(ID)
+	if item, exists := mempool[txID]; exists {
+		return item.Tx, nil
+	}
+	return chain.FindTransaction(ID)
+}
+
+// VerifyTransactionWithMempool verifies transaction input signatures,
+// checking the mempool for unconfirmed parent transactions before the DB.
+func (chain *Blockchain) VerifyTransactionWithMempool(tx *Transaction, mempool map[string]MempoolItem) bool {
+	if tx.IsCoinbase() {
+		return true
 	}
 
-	// 2. Verify each transaction
+	prevTXs := make(map[string]Transaction)
+
+	for _, vin := range tx.Vin {
+		prevTX, err := chain.FindTransactionWithMempool(vin.Txid, mempool)
+		if err != nil {
+			fmt.Printf("⛔ [VerifyTransaction] Rejected: Parent transaction %x not found in DB or Mempool.\n", vin.Txid)
+			return false
+		}
+		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
+	}
+
+	return tx.Verify(prevTXs)
+}
+
+// VerifyBlockTransactions validates all transaction signatures in a block
+// using a two-pass approach to handle arbitrary intra-block TX ordering.
+// The optional externalCache accumulates TXs across blocks during IBD.
+func (chain *Blockchain) VerifyBlockTransactions(block *Block, externalCache ...map[string]Transaction) bool {
+	// Extract optional external (cross-block IBD) cache
+	var crossBlockCache map[string]Transaction
+	if len(externalCache) > 0 && externalCache[0] != nil {
+		crossBlockCache = externalCache[0]
+	}
+
+	// ── Pass 1: Pre-populate block TX cache ─────────────────────────────
+	blockTxCache := make(map[string]Transaction)
+
+	// Merge cross-block IBD cache first (lower priority)
+	for k, v := range crossBlockCache {
+		blockTxCache[k] = v
+	}
+
+	// Then overlay this block's own TXs (higher priority)
+	for _, tx := range block.Transactions {
+		if tx == nil {
+			log.Println("⚠️ [VerifyBlockTransactions] Nil transaction found in block, rejecting...")
+			return false
+		}
+		blockTxCache[hex.EncodeToString(tx.ID)] = *tx
+	}
+
+	// ── Pass 2: Validate each transaction with the pre-populated cache ──
 	for _, tx := range block.Transactions {
 		if tx.IsCoinbase() {
 			continue
@@ -738,11 +781,10 @@ func (chain *Blockchain) VerifyBlockTransactions(block *Block) bool {
 		for _, vin := range tx.Vin {
 			parentTxID := hex.EncodeToString(vin.Txid)
 
-			// Check if the parent transaction is in the same block
-			if intraTx, exists := blockTxs[parentTxID]; exists {
-				prevTXs[parentTxID] = *intraTx
+			if cachedTx, exists := blockTxCache[parentTxID]; exists {
+				prevTXs[parentTxID] = cachedTx
 			} else {
-				// Otherwise, it must be in the blockchain database
+				// Fallback to blockchain database
 				prevTX, err := chain.FindTransaction(vin.Txid)
 				if err != nil {
 					fmt.Printf("⛔ [VerifyBlockTransactions] Rejected: Parent transaction %x not found.\n", vin.Txid)
@@ -752,10 +794,16 @@ func (chain *Blockchain) VerifyBlockTransactions(block *Block) bool {
 			}
 		}
 
-		// Verify the ECDSA signature of the inputs
 		if !tx.Verify(prevTXs) {
 			fmt.Printf("⛔ [VerifyBlockTransactions] Rejected: Invalid signature in transaction %x\n", tx.ID)
 			return false
+		}
+	}
+
+	// ── Post-verification: feed this block's TXs into the IBD cache ─────
+	if crossBlockCache != nil {
+		for _, tx := range block.Transactions {
+			crossBlockCache[hex.EncodeToString(tx.ID)] = *tx
 		}
 	}
 
@@ -797,7 +845,8 @@ func DeserializeBlock(d []byte) *Block {
 	decoder := gob.NewDecoder(bytes.NewReader(d))
 	err := decoder.Decode(&block)
 	if err != nil {
-		log.Panic(err)
+		log.Printf("⚠️ DeserializeBlock failed (%d bytes): %v", len(d), err)
+		return nil
 	}
 	return &block
 }

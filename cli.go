@@ -271,11 +271,8 @@ func init() {
 func startNode(cmd *cobra.Command, args []string) {
 	fmt.Printf("Starting SOLE node on port %d...\n", portFlag)
 
-	// Check DB existence if not mining (or even if mining, usually need DB)
-	// But ContinueBlockchain inside StartServer or Network will handle it?
-	// The request asked for check in node start.
 	if !DBExists() {
-		fmt.Println("⚠️  Database not found. Did you run './sole-cli init'?")
+		fmt.Println("⚠️  Database not found. Did you run './sole-cli chain init'?")
 		os.Exit(1)
 	}
 
@@ -548,7 +545,6 @@ func send(cmd *cobra.Command, args []string) {
 		log.Panic(err)
 	}
 
-	// Wait for connection and send
 	// Wait for connection and send
 	fmt.Println("Waiting for connection...")
 	found := false

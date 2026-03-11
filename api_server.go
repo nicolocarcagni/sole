@@ -390,8 +390,15 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	// Deserialize
 	tx := DeserializeTransaction(txBytes)
 
-	// Basic Validation
-	if rs.P2P.Blockchain.VerifyTransaction(&tx) == false {
+	// Validate with mempool context for chained transactions
+	rs.P2P.MempoolMux.Lock()
+	mempoolSnapshot := make(map[string]MempoolItem, len(rs.P2P.Mempool))
+	for k, v := range rs.P2P.Mempool {
+		mempoolSnapshot[k] = v
+	}
+	rs.P2P.MempoolMux.Unlock()
+
+	if rs.P2P.Blockchain.VerifyTransactionWithMempool(&tx, mempoolSnapshot) == false {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction invalid"})
 		return
 	}
@@ -403,6 +410,22 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	defer rs.P2P.MempoolMux.Unlock()
 
 	if rs.P2P.Mempool[txID].Tx.ID == nil {
+		// Check for mempool double-spend
+		for _, vin := range tx.Vin {
+			inputKey := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
+			for existingID, existing := range rs.P2P.Mempool {
+				for _, evin := range existing.Tx.Vin {
+					existingKey := hex.EncodeToString(evin.Txid) + ":" + fmt.Sprintf("%d", evin.Vout)
+					if inputKey == existingKey {
+						json.NewEncoder(w).Encode(ErrorResponse{
+							Error: fmt.Sprintf("Double-spend: input %s already used by mempool TX %s", inputKey, existingID),
+						})
+						return
+					}
+				}
+			}
+		}
+
 		rs.P2P.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
 		fmt.Printf("API: Transaction added to Mempool: %s\n", txID)
 

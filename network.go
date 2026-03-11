@@ -1,10 +1,10 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
+	"encoding/binary"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
@@ -305,15 +305,35 @@ func (s *Server) Start() {
 }
 
 func (s *Server) HandleStream(stream network.Stream) {
-	rw := bufio.NewReadWriter(bufio.NewReader(stream), bufio.NewWriter(stream))
-	go s.ReadData(rw, stream.Conn().RemotePeer())
+	// Set a generous read deadline for large block transfers
+	stream.SetReadDeadline(time.Now().Add(2 * time.Minute))
+	go s.ReadData(stream, stream.Conn().RemotePeer())
 }
 
-func (s *Server) ReadData(rw *bufio.ReadWriter, peerID peer.ID) {
-	// Read all data until EOF (stream closed)
-	payload, err := io.ReadAll(rw)
+func (s *Server) ReadData(stream network.Stream, peerID peer.ID) {
+	defer stream.Close()
+
+	// Read 4-byte length prefix (big-endian)
+	lenBuf := make([]byte, 4)
+	_, err := io.ReadFull(stream, lenBuf)
 	if err != nil {
-		log.Printf("Error reading stream [%s]: %v", peerID.String(), err)
+		if err != io.EOF {
+			log.Printf("Error reading length prefix from %s: %v", ShortID(peerID.String()), err)
+		}
+		return
+	}
+
+	payloadLen := binary.BigEndian.Uint32(lenBuf)
+	if payloadLen == 0 || payloadLen > 64*1024*1024 { // 64MB safety cap
+		log.Printf("⚠️ Invalid payload length from %s: %d bytes. Dropping.", ShortID(peerID.String()), payloadLen)
+		return
+	}
+
+	// Read exactly payloadLen bytes
+	payload := make([]byte, payloadLen)
+	_, err = io.ReadFull(stream, payload)
+	if err != nil {
+		log.Printf("Error reading payload (%d bytes) from %s: %v", payloadLen, ShortID(peerID.String()), err)
 		return
 	}
 
@@ -323,8 +343,6 @@ func (s *Server) ReadData(rw *bufio.ReadWriter, peerID peer.ID) {
 
 	command := BytesToCommand(payload[:commandLength])
 	content := payload[commandLength:]
-
-	// fmt.Printf("Received %s command from %s\n", command, peerID.String())
 
 	switch command {
 	case "version":
@@ -492,6 +510,10 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 	}
 
 	block := DeserializeBlock(payload.Block)
+	if block == nil {
+		log.Printf("⚠️ [HandleBlock] Failed to deserialize block from %s. Dropping.", ShortID(peerID.String()))
+		return
+	}
 
 	s.BlockBufferMux.Lock()
 	isSyncing := s.IsSyncing
@@ -561,9 +583,17 @@ func (s *Server) applyBufferedBlocks() {
 		len(heights), heights[0], heights[len(heights)-1])
 
 	applied := 0
+	// Cumulative cache: accumulates verified TXs across blocks so
+	// cross-block dependencies within this IBD batch resolve in-memory.
+	ibdTxCache := make(map[string]Transaction)
+
 	for _, h := range heights {
 		block := s.BlockBuffer[h]
-		if s.Blockchain.AddBlock(block) {
+		if block == nil {
+			log.Printf("⚠️ [IBD] Nil block encountered at height %d, skipping...", h)
+			continue
+		}
+		if s.Blockchain.AddBlock(block, ibdTxCache) {
 			applied++
 		}
 	}
@@ -596,14 +626,12 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	s.MempoolMux.Lock()
 	defer s.MempoolMux.Unlock()
 
-
 	txID := hex.EncodeToString(tx.ID)
 	if s.Mempool[txID].Tx.ID != nil {
 		return
 	}
 
-
-	fee, err := s.UTXOSet.CalculateFee(&tx)
+	fee, err := s.UTXOSet.CalculateFee(&tx, s.Mempool)
 	if err != nil {
 		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: Cannot calculate fee: %s\n", tx.ID, err)
 		return
@@ -613,9 +641,25 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		return
 	}
 
+	// Check for mempool double-spend: reject if any input is already consumed
+	for _, vin := range tx.Vin {
+		inputKey := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
+		for existingID, existing := range s.Mempool {
+			if existingID == txID {
+				continue
+			}
+			for _, evin := range existing.Tx.Vin {
+				existingKey := hex.EncodeToString(evin.Txid) + ":" + fmt.Sprintf("%d", evin.Vout)
+				if inputKey == existingKey {
+					fmt.Printf("⚠️  [HandleTx] Rejected TX %x: double-spend attempt against mempool TX %s\n", tx.ID, existingID)
+					return
+				}
+			}
+		}
+	}
+
 	fmt.Printf("New Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
 	s.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
-
 
 	peers := s.Host.Network().Peers()
 	for _, p := range peers {
@@ -669,8 +713,8 @@ func (s *Server) AttemptMine() {
 	for id := range s.Mempool {
 		item := s.Mempool[id]
 		tx := item.Tx
-		if s.Blockchain.VerifyTransaction(&tx) {
-			fee, err := s.UTXOSet.CalculateFee(&tx)
+		if s.Blockchain.VerifyTransactionWithMempool(&tx, s.Mempool) {
+			fee, err := s.UTXOSet.CalculateFee(&tx, s.Mempool)
 			if err == nil && fee >= 0 {
 				validTxs = append(validTxs, txWithFee{tx: &tx, fee: fee})
 			} else {
@@ -687,7 +731,6 @@ func (s *Server) AttemptMine() {
 		return
 	}
 
-
 	sort.Slice(validTxs, func(i, j int) bool {
 		return validTxs[i].fee > validTxs[j].fee
 	})
@@ -698,33 +741,67 @@ func (s *Server) AttemptMine() {
 		totalFees += twf.fee
 	}
 
-
 	bestHeight := s.Blockchain.GetBestHeight()
 	nextHeight := bestHeight + 1
 	subsidy := s.Blockchain.GetBlockSubsidy(nextHeight)
 
-
 	totalReward := subsidy + totalFees
 	cbTx := NewCoinbaseTX(s.MinerAddr, "", totalReward)
 
-	// [SECURITY FIX] Ensure the set of transactions doesn't contain double-spends
+	// Detect and evict conflicting transactions instead of wiping the entire mempool
 	prospectiveBlock := &Block{Transactions: append([]*Transaction{cbTx}, txs...)}
 	if !s.UTXOSet.ValidateBlockTransactions(prospectiveBlock) {
-		fmt.Println("⚠️  Mempool contains conflicting transactions. Clearing Mempool.")
-		s.Mempool = make(map[string]MempoolItem)
-		return
-	}
+		fmt.Println("⚠️  Mempool contains conflicting transactions. Evicting conflicts...")
 
-	txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
+		// Build a set of consumed inputs to detect conflicts
+		spentInputs := make(map[string]string) // input outpoint -> first txID that claimed it
+		var cleanTxs []txWithFee
+		totalFees = 0
+
+		for _, twf := range validTxs {
+			conflict := false
+			tid := hex.EncodeToString(twf.tx.ID)
+			for _, vin := range twf.tx.Vin {
+				key := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
+				if claimer, exists := spentInputs[key]; exists {
+					fmt.Printf("  ↳ Evicted TX %s (conflicts with %s on input %s)\n", tid, claimer, key)
+					delete(s.Mempool, tid)
+					conflict = true
+					break
+				}
+			}
+			if !conflict {
+				for _, vin := range twf.tx.Vin {
+					key := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
+					spentInputs[key] = tid
+				}
+				cleanTxs = append(cleanTxs, twf)
+				totalFees += twf.fee
+			}
+		}
+
+		if len(cleanTxs) == 0 {
+			fmt.Println("No valid transactions remain after conflict eviction.")
+			return
+		}
+
+		// Rebuild the block with clean transactions
+		totalReward = subsidy + totalFees
+		cbTx = NewCoinbaseTX(s.MinerAddr, "", totalReward)
+		txs = []*Transaction{cbTx}
+		for _, twf := range cleanTxs {
+			txs = append(txs, twf.tx)
+		}
+	} else {
+		txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
+	}
 
 	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
 	s.UTXOSet.Update(newBlock)
 
-
 	s.Mempool = make(map[string]MempoolItem)
 
 	fmt.Printf("New block forged: %x (Reward: %d | Sub: %d + Fee: %d)\n", newBlock.Hash, totalReward, subsidy, totalFees)
-
 
 	peers := s.Host.Network().Peers()
 	for _, p := range peers {
@@ -781,9 +858,18 @@ func (s *Server) SendData(peerID peer.ID, data []byte) {
 	}
 	defer stream.Close()
 
+	// Write 4-byte big-endian length prefix
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, uint32(len(data)))
+	_, err = stream.Write(lenBuf)
+	if err != nil {
+		log.Printf("Error writing length prefix to %s: %v", ShortID(peerID.String()), err)
+		return
+	}
+
 	_, err = stream.Write(data)
 	if err != nil {
-		// log.Panic(err)
+		log.Printf("Error writing payload to %s: %v", ShortID(peerID.String()), err)
 	}
 }
 
