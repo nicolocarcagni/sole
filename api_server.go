@@ -265,19 +265,41 @@ func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
 	pubKeyHash, _ := Base58Decode([]byte(addr))
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
 
+	// 1. Identify Mempool Spends
+	mempoolSpends := make(map[string]bool)
+	rs.P2P.MempoolMux.Lock()
+	for _, item := range rs.P2P.Mempool {
+		for _, vin := range item.Tx.Vin {
+			key := fmt.Sprintf("%x-%d", vin.Txid, vin.Vout)
+			mempoolSpends[key] = true
+		}
+	}
+	rs.P2P.MempoolMux.Unlock()
+
 	utxos := rs.P2P.Blockchain.FindUnspentTransactions(pubKeyHash)
 	var response []UTXOResponse
 
 	for _, tx := range utxos {
+		txID := hex.EncodeToString(tx.ID)
 		for outIdx, out := range tx.Vout {
 			if out.IsLockedWithKey(pubKeyHash) {
+				// 2. Filter out Mempool-locked UTXOs
+				key := fmt.Sprintf("%s-%d", txID, outIdx)
+				if mempoolSpends[key] {
+					continue
+				}
+
 				response = append(response, UTXOResponse{
-					TxID:   hex.EncodeToString(tx.ID),
+					TxID:   txID,
 					Vout:   outIdx,
 					Amount: out.Value,
 				})
 			}
 		}
+	}
+
+	if response == nil {
+		response = make([]UTXOResponse, 0)
 	}
 
 	json.NewEncoder(w).Encode(response)
