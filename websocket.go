@@ -96,18 +96,21 @@ func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
 
 // JSON payloads
 
+type WsOutput struct {
+	Address string `json:"address"`
+	Value   int64  `json:"value"`
+}
+
 type WsMempoolEvent struct {
-	Event   string `json:"event"`
-	TxID    string `json:"txid"`
-	Amount  int64  `json:"amount"`
-	To      string `json:"to"`
-	Memo    string `json:"memo,omitempty"`
+	Event   string     `json:"event"`
+	TxID    string     `json:"txid"`
+	Memo    string     `json:"memo,omitempty"`
+	Outputs []WsOutput `json:"outputs"`
 }
 
 type WsBlockTxSummary struct {
-	TxID   string `json:"txid"`
-	Amount int64  `json:"amount"`
-	To     string `json:"to"`
+	TxID    string     `json:"txid"`
+	Outputs []WsOutput `json:"outputs"`
 }
 
 type WsBlockEvent struct {
@@ -124,8 +127,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 		return
 	}
 
-	var amount int64
-	var toAddr string
+	var outputs []WsOutput
 	var memo string
 
 	for _, vout := range tx.Vout {
@@ -134,17 +136,18 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 			continue
 		}
 		if vout.Value > 0 {
-			amount += vout.Value
-			toAddr = PubKeyHashToAddress(vout.PubKeyHash)
+			outputs = append(outputs, WsOutput{
+				Address: PubKeyHashToAddress(vout.PubKeyHash),
+				Value:   vout.Value,
+			})
 		}
 	}
 
 	evt := WsMempoolEvent{
-		Event:  "new_tx",
-		TxID:   hex.EncodeToString(tx.ID),
-		Amount: amount,
-		To:     toAddr,
-		Memo:   memo,
+		Event:   "new_tx",
+		TxID:    hex.EncodeToString(tx.ID),
+		Memo:    memo,
+		Outputs: outputs,
 	}
 
 	payload, err := json.Marshal(evt)
@@ -169,21 +172,21 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 		if tx.IsCoinbase() {
 			continue
 		}
-		var amount int64
-		var toAddr string
+		var outputs []WsOutput
 		for _, vout := range tx.Vout {
 			if vout.IsOPReturn() {
 				continue
 			}
 			if vout.Value > 0 {
-				amount += vout.Value
-				toAddr = PubKeyHashToAddress(vout.PubKeyHash)
+				outputs = append(outputs, WsOutput{
+					Address: PubKeyHashToAddress(vout.PubKeyHash),
+					Value:   vout.Value,
+				})
 			}
 		}
 		txSummaries = append(txSummaries, WsBlockTxSummary{
-			TxID:   hex.EncodeToString(tx.ID),
-			Amount: amount,
-			To:     toAddr,
+			TxID:    hex.EncodeToString(tx.ID),
+			Outputs: outputs,
 		})
 	}
 
