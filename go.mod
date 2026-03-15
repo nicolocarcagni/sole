@@ -6,6 +6,7 @@ require (
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/fatih/color v1.18.0
 	github.com/gorilla/mux v1.8.1
+	github.com/gorilla/websocket v1.5.3
 	github.com/libp2p/go-libp2p v0.46.0
 	github.com/multiformats/go-multiaddr v0.16.0
 	github.com/spf13/cobra v1.10.2
@@ -30,7 +31,6 @@ require (
 	github.com/golang/snappy v0.0.3 // indirect
 	github.com/google/flatbuffers v1.12.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/huin/goupnp v1.3.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/ipfs/go-cid v0.5.0 // indirect

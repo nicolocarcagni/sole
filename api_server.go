@@ -44,6 +44,14 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	// Stricter limit for Sending Transactions
 	router.Handle("/tx/send", writeMW(http.HandlerFunc(rs.sendTx))).Methods("POST")
 
+	// WebSocket Endpoints (no rate limiting — long-lived connections)
+	router.HandleFunc("/ws/mempool", func(w http.ResponseWriter, r *http.Request) {
+		handleWs(rs.P2P.MempoolHub, w, r)
+	})
+	router.HandleFunc("/ws/blocks", func(w http.ResponseWriter, r *http.Request) {
+		handleWs(rs.P2P.BlockHub, w, r)
+	})
+
 	addr := fmt.Sprintf("%s:%d", listenHost, port)
 	fmt.Printf("🚀 API Server started on http://%s\n", addr)
 
@@ -450,6 +458,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 
 		rs.P2P.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
 		fmt.Printf("API: Transaction added to Mempool: %s\n", txID)
+		BroadcastMempoolTx(rs.P2P.MempoolHub, &tx)
 
 		// Broadcast Inv
 		peers := rs.P2P.Host.Network().Peers()

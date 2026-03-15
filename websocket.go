@@ -1,0 +1,209 @@
+package main
+
+import (
+	"encoding/hex"
+	"encoding/json"
+	"log"
+	"net/http"
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+type EventHub struct {
+	clients    map[chan []byte]bool
+	Register   chan chan []byte
+	Unregister chan chan []byte
+	Broadcast  chan []byte
+	mux        sync.Mutex
+}
+
+func NewEventHub() *EventHub {
+	return &EventHub{
+		clients:    make(map[chan []byte]bool),
+		Register:   make(chan chan []byte),
+		Unregister: make(chan chan []byte),
+		Broadcast:  make(chan []byte, 256),
+	}
+}
+
+func (h *EventHub) Run() {
+	for {
+		select {
+		case client := <-h.Register:
+			h.mux.Lock()
+			h.clients[client] = true
+			h.mux.Unlock()
+
+		case client := <-h.Unregister:
+			h.mux.Lock()
+			if _, ok := h.clients[client]; ok {
+				delete(h.clients, client)
+				close(client)
+			}
+			h.mux.Unlock()
+
+		case message := <-h.Broadcast:
+			h.mux.Lock()
+			for client := range h.clients {
+				select {
+				case client <- message:
+				default:
+					delete(h.clients, client)
+					close(client)
+				}
+			}
+			h.mux.Unlock()
+		}
+	}
+}
+
+func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Printf("⚠️  [WS] Upgrade failed: %v", err)
+		return
+	}
+
+	send := make(chan []byte, 64)
+	hub.Register <- send
+
+	defer func() {
+		hub.Unregister <- send
+		conn.Close()
+	}()
+
+	// Writer goroutine: relay hub broadcasts to this WebSocket connection
+	go func() {
+		for msg := range send {
+			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Reader loop: keep the connection alive, discard incoming messages
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			break
+		}
+	}
+}
+
+// JSON payloads
+
+type WsMempoolEvent struct {
+	Event   string `json:"event"`
+	TxID    string `json:"txid"`
+	Amount  int64  `json:"amount"`
+	To      string `json:"to"`
+	Memo    string `json:"memo,omitempty"`
+}
+
+type WsBlockTxSummary struct {
+	TxID   string `json:"txid"`
+	Amount int64  `json:"amount"`
+	To     string `json:"to"`
+}
+
+type WsBlockEvent struct {
+	Event        string             `json:"event"`
+	Hash         string             `json:"hash"`
+	Height       int                `json:"height"`
+	TxCount      int                `json:"tx_count"`
+	Transactions []WsBlockTxSummary `json:"transactions"`
+}
+
+// BroadcastMempoolTx builds and sends a mempool event (non-blocking)
+func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
+	if hub == nil {
+		return
+	}
+
+	var amount int64
+	var toAddr string
+	var memo string
+
+	for _, vout := range tx.Vout {
+		if vout.IsOPReturn() {
+			memo = string(vout.PubKeyHash)
+			continue
+		}
+		if vout.Value > 0 {
+			amount += vout.Value
+			toAddr = PubKeyHashToAddress(vout.PubKeyHash)
+		}
+	}
+
+	evt := WsMempoolEvent{
+		Event:  "new_tx",
+		TxID:   hex.EncodeToString(tx.ID),
+		Amount: amount,
+		To:     toAddr,
+		Memo:   memo,
+	}
+
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+
+	select {
+	case hub.Broadcast <- payload:
+	default:
+	}
+}
+
+// BroadcastBlock builds and sends a block event (non-blocking)
+func BroadcastBlock(hub *EventHub, block *Block) {
+	if hub == nil {
+		return
+	}
+
+	var txSummaries []WsBlockTxSummary
+	for _, tx := range block.Transactions {
+		if tx.IsCoinbase() {
+			continue
+		}
+		var amount int64
+		var toAddr string
+		for _, vout := range tx.Vout {
+			if vout.IsOPReturn() {
+				continue
+			}
+			if vout.Value > 0 {
+				amount += vout.Value
+				toAddr = PubKeyHashToAddress(vout.PubKeyHash)
+			}
+		}
+		txSummaries = append(txSummaries, WsBlockTxSummary{
+			TxID:   hex.EncodeToString(tx.ID),
+			Amount: amount,
+			To:     toAddr,
+		})
+	}
+
+	evt := WsBlockEvent{
+		Event:        "new_block",
+		Hash:         hex.EncodeToString(block.Hash),
+		Height:       block.Height,
+		TxCount:      len(block.Transactions),
+		Transactions: txSummaries,
+	}
+
+	payload, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+
+	select {
+	case hub.Broadcast <- payload:
+	default:
+	}
+}
+
+

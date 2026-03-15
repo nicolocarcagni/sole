@@ -55,6 +55,10 @@ type Server struct {
 	Mempool          map[string]MempoolItem
 	MempoolMux       sync.Mutex
 
+	// WebSocket Event Hubs
+	MempoolHub *EventHub
+	BlockHub   *EventHub
+
 	// IBD (Initial Block Download) state
 	SyncingFrom    peer.ID        // Peer we are currently syncing from
 	IsSyncing      bool           // True while IBD is in progress
@@ -204,6 +208,11 @@ func NewServer(cfg ServerConfig) *Server {
 	chain := ContinueBlockchain("")
 	UTXOSet := &UTXOSet{chain}
 
+	mempoolHub := NewEventHub()
+	go mempoolHub.Run()
+	blockHub := NewEventHub()
+	go blockHub.Run()
+
 	server := &Server{
 		Host:             h,
 		Blockchain:       chain,
@@ -212,6 +221,8 @@ func NewServer(cfg ServerConfig) *Server {
 		ValidatorPrivKey: cfg.PrivKey,
 		KnownPeers:       make(map[string]string),
 		Mempool:          make(map[string]MempoolItem),
+		MempoolHub:       mempoolHub,
+		BlockHub:         blockHub,
 		BlockBuffer:      make(map[int]*Block),
 	}
 
@@ -546,6 +557,7 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 		if s.Blockchain.AddBlock(block) {
 			s.UTXOSet.Update(block)
 			fmt.Printf("✅ Block added %x and UTXO set updated.\n", block.Hash)
+			BroadcastBlock(s.BlockHub, block)
 		} else {
 			fmt.Printf("Block discarded or duplicate: %x\n", block.Hash)
 		}
@@ -599,6 +611,13 @@ func (s *Server) applyBufferedBlocks() {
 	}
 
 	fmt.Printf("✅ [IBD] Sync complete. Applied %d blocks.\n", applied)
+
+	// Broadcast the tip block to WebSocket clients
+	if len(heights) > 0 {
+		if tipBlock := s.BlockBuffer[heights[len(heights)-1]]; tipBlock != nil {
+			BroadcastBlock(s.BlockHub, tipBlock)
+		}
+	}
 
 	// Full UTXO reindex from the now-complete chain
 	fmt.Println("🔄 [IBD] Rebuilding UTXO set (Reindex)...")
@@ -660,6 +679,7 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 
 	fmt.Printf("New Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
 	s.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
+	BroadcastMempoolTx(s.MempoolHub, &tx)
 
 	peers := s.Host.Network().Peers()
 	for _, p := range peers {
@@ -798,6 +818,7 @@ func (s *Server) AttemptMine() {
 
 	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
 	s.UTXOSet.Update(newBlock)
+	BroadcastBlock(s.BlockHub, newBlock)
 
 	s.Mempool = make(map[string]MempoolItem)
 
