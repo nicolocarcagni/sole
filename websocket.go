@@ -96,6 +96,10 @@ func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
 
 // JSON payloads
 
+type WsInput struct {
+	Address string `json:"sender_address"`
+}
+
 type WsOutput struct {
 	Address string `json:"address"`
 	Value   int64  `json:"value"`
@@ -105,11 +109,13 @@ type WsMempoolEvent struct {
 	Event   string     `json:"event"`
 	TxID    string     `json:"txid"`
 	Memo    string     `json:"memo,omitempty"`
+	Inputs  []WsInput  `json:"inputs"`
 	Outputs []WsOutput `json:"outputs"`
 }
 
 type WsBlockTxSummary struct {
 	TxID    string     `json:"txid"`
+	Inputs  []WsInput  `json:"inputs"`
 	Outputs []WsOutput `json:"outputs"`
 }
 
@@ -125,6 +131,17 @@ type WsBlockEvent struct {
 func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 	if hub == nil {
 		return
+	}
+
+	var inputs []WsInput
+	if tx.IsCoinbase() {
+		inputs = append(inputs, WsInput{Address: "COINBASE"})
+	} else {
+		for _, vin := range tx.Vin {
+			inputs = append(inputs, WsInput{
+				Address: PubKeyToAddress(vin.PubKey),
+			})
+		}
 	}
 
 	var outputs []WsOutput
@@ -147,6 +164,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 		Event:   "new_tx",
 		TxID:    hex.EncodeToString(tx.ID),
 		Memo:    memo,
+		Inputs:  inputs,
 		Outputs: outputs,
 	}
 
@@ -172,6 +190,14 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 		if tx.IsCoinbase() {
 			continue
 		}
+		
+		var inputs []WsInput
+		for _, vin := range tx.Vin {
+			inputs = append(inputs, WsInput{
+				Address: PubKeyToAddress(vin.PubKey),
+			})
+		}
+
 		var outputs []WsOutput
 		for _, vout := range tx.Vout {
 			if vout.IsOPReturn() {
@@ -186,6 +212,7 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 		}
 		txSummaries = append(txSummaries, WsBlockTxSummary{
 			TxID:    hex.EncodeToString(tx.ID),
+			Inputs:  inputs,
 			Outputs: outputs,
 		})
 	}
