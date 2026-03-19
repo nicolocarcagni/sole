@@ -446,8 +446,8 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 }
 
 const (
-	MaxSupply       = 19550000 * 100000000 // 19.55M * 10^8
-	InitialSubsidy  = 50 * 100000000       // 50 SOLE
+	MaxSupply       = 8910000 * 100000000  // 8.91M * 10^8
+	InitialSubsidy  = 10 * 100000000       // 10 SOLE
 	HalvingInterval = 195500               // Blocks
 )
 
