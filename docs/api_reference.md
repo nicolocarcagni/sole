@@ -1,13 +1,14 @@
 # SOLE API Reference
+**Building apps on the campus network.**
 
-The SOLE node exposes a RESTful JSON HTTP server for managing transactions, checking chain topologies, and retrieving network heuristics. By default, it listens on port `8080`.
+The SOLE node includes a simple REST API. This is what you'll use if you're building a dashboard, a web wallet, or a research tool for a university project. By default, it listens on port `8080`.
 
-## Rate Limiting
-To ensure reliable operation across distributed network topographies, endpoints are rate-limited per connecting IP:
-*   **Data Endpoints (`GET`)**: 20 requests/sec (burst tolerance: 30)
-*   **Action Endpoints (`POST`)**: 5 requests/sec (burst tolerance: 10)
+## Keeping things fair (Rate Limiting)
+To make sure nobody accidentally crashes the node during testing, we've added some basic rate limits.
+*   **Reading data (`GET`)**: 20 requests per second.
+*   **Sending actions (`POST`)**: 5 requests per second.
 
-All successful queries yield JSON payloads. Endpoints return precise JSON mappings for cryptographic components.
+If you hit these limits, the node will politely ask you to wait.
 
 ---
 
@@ -159,6 +160,8 @@ Yields a statically defined array of authority keys recognized by the node's cur
 
 ---
 
+---
+
 ### `POST /tx/send`
 Submits a raw, properly structured and cryptographically signed hex byte array containing an unconfirmed transaction to the local memory pool.
 
@@ -180,5 +183,33 @@ Submits a raw, properly structured and cryptographically signed hex byte array c
     ```json
     {
       "error": "Transaction invalid"
+    }
+    ```
+
+---
+
+## Real-time Events (WebSockets)
+
+SOLE v3.0.0 exposes bi-directional communication channels for reactive applications. All events are broadcasted as JSON payloads.
+
+### `/ws/mempool`
+Streams all incoming transactions validated by the node. Use this to display "Unconfirmed" activity in real-time.
+
+*   **Event Structure**:
+    ```json
+    {
+      "type": "new_transaction",
+      "data": { "id": "...", "amount": 10.5, "sender": "...", "receiver": "..." }
+    }
+    ```
+
+### `/ws/blocks`
+Streams newly forged blocks immediately after they are added to the local chain.
+
+*   **Event Structure**:
+    ```json
+    {
+      "type": "new_block",
+      "data": { "height": 143, "hash": "...", "tx_count": 5 }
     }
     ```

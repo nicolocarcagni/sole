@@ -1,88 +1,74 @@
-# SOLE Blockchain Technical Whitepaper v1.0
-**Secure Open Ledger for Education**
+# SOLE Blockchain: A Technical Deep-Dive (v3.0.0)
+**The Ledger for the University of Salento**
 
-**Authors:** Nicolò Carcagni (Dipartimento di Ingegneria dell'Informazione, Università del Salento)  
-**Date:** February 2026  
-**Status:** Release 1.0
+**By:** Nicolò Carcagni (Dept. of Engineering, Unisalento)  
+**Updated:** March 2026
 
 ---
 
-## 1. Abstract
+## 1. What is SOLE?
 
-SOLE is a lightweight, permissioned blockchain infrastructure designed for educational and research purposes at the University of Salento. Implemented in Go, it features a Hybrid Proof of Authority (PoA) consensus mechanism and a robust Libp2p networking stack for peer-to-peer distributed communication. The architecture utilizes persistent Unspent Transaction Output (UTXO) accounting and strict cryptographic guarantees to prevent double-spending and ensure immutable ledger integrity.
+We built SOLE to give our university a fast, ownable way to move value. It’s not just code; it’s a tool for students and researchers. Whether you're sending a few SOLE to a friend for a coffee at the faculty bar or tracking research credits, the v3.0.0 "Hard Fork" makes the network faster and much easier to use. 
 
-## 2. System Architecture
+We’ve swapped out slow proof-of-work for a Proof of Authority (PoA) system. We also added BIP39 mnemonics so you can stop wrestling with raw hex keys.
 
-The SOLE core architecture is structured around a sequential, cryptographically linked chain of blocks.
+## 2. Under the Hood
 
-### Persistence Layer
-Data persistence is handled by **BadgerDB v3**, an embeddable, pure-Go Key-Value store based on Log-Structured Merge (LSM) Trees. The database structure includes parallel indices mapping transaction IDs (`tx-ID`) directly to block hashes, achieving $O(1)$ transaction lookup complexity. Overarching state integrity is guarded by value checksum verification and strict concurrent access locks.
+We strictly use Go. It’s fast, handles concurrency like a pro, and has great libraries for networking.
 
-### Transport and Storage Serialization
-All internal storage operations and network peer synchronizations utilize `encoding/gob` for high-performance binary serialization. Externally exposed API endpoints execute deterministic JSON marshaling.
+### How we store data
+We use **BadgerDB v3** for persistent storage. It’s a key-value store based on LSM trees. We’ve indexed every transaction ID directly to its block hash. This means when you look up a transaction, the node finds it instantly ($O(1)$ complexity). We also use strict locks to make sure multiple threads don't trip over each other when writing to the database.
 
-## 3. Cryptography & Security
+### Moving data around
+We use `encoding/gob` for binary speed when nodes talk to each other. For the outside world—like our mobile wallets and WebSockets—we use standard JSON.
 
-SOLE employs standard cryptographic primitives to verify authority and maintain transaction immutability.
+## 3. Security (Without the Headaches)
 
-*   **Hashing Protocol**: `SHA-256` is uniformly enforced for block header calculation and Transaction ID generation.
-*   **Signatures**: Digital signatures use the Elliptic Curve Digital Signature Algorithm (`ECDSA`) over the **NIST P-256** curve. The node natively parses standard uncompressed keys (65 bytes with `0x04` prefix) and raw structural coordinate vectors.
-*   **Identity Extraction**: Public keys are hashed sequentially with `SHA-256` and `RIPEMD-160`. Base58Check encoding converts payloads into string addresses mapped to the version prefix `1`.
+We want SOLE to be secure but practical.
 
-## 4. Transaction Model (UTXO)
+*   **12-Word Seeds**: You don't need to copy-paste scary hex strings anymore. We use BIP39 seed phrases. 12 words give you 128 bits of entropy. Lose your phone? Type those 12 words into any SOLE-compatible wallet and your funds are back.
+*   **Signatures**: We use ECDSA on the **NIST P-256** (secp256r1) curve. It’s standard, fast, and secure.
+*   **Clean Addresses**: We hash your public key with SHA-256 and RIPEMD-160, then wrap it in Base58Check. This gives you a clean address that’s easy to share.
 
-The ledger operates entirely on the **Unspent Transaction Output (UTXO)** architecture. State vectors are exclusively defined by the set of all unspent outputs bound to specific public key hashes. 
+## 4. The Transaction Model (UTXO)
 
-### Intra-Block State Verification
-The `UTXOSet` performs comprehensive validation covering multi-topology attack vectors. For any received transaction, the node verifies input existence within the BadgerDB persistent state. To mitigate mempool chain attacks, the protocol executes a two-pass `ValidateBlockTransactions` routine on newly minted blocks, actively tracking intra-block output lifecycles to unequivocally block simultaneous double-spends within identical block parameters.
+SOLE doesn't use account balances like a bank. We use the **UTXO model**, just like Bitcoin. Your "balance" is actually a collection of unspent outputs waiting for you to unlock them.
 
-### Replay Protection
-All transactions instantiate an intrinsic UNIX Timestamp (`int64`), guaranteeing uniqueness for structurally identical spending patterns and rendering cross-chain or delayed replay broadcasting ineffective.
+### Keeping the Mempool Clean
+Double-spending is the enemy. Our v3.0.0 mempool proactively kicks out any transaction that tries to spend a UTXO if another pending transaction is already claiming it. By the time a block is being forged, the transactions are already vetted.
 
-### Transaction Fee Market
-Fees are calculated implicitly via localized UTXO math: `Fee = Sum(Inputs) - Sum(Outputs)`. Transactions residing in the Mempool are securely prioritized by descending absolute fee, incentivizing miners. The resulting Coinbase creation restricts the subsidy claim exactly to `Block Subsidy + Total Collected Fees`, deterring hyper-inflationary consensus breaches.
+### Memos (OP_RETURN)
+Need to send 15 SOLE to a classmate for their Math notes? You can attach an 80-byte memo to your transaction. It’s recorded on the chain forever but doesn't slow down the node's memory.
 
-### Mempool Integrity (TTL)
-To prevent unmined zero-fee or orphaned transactions from leaking node RAM permanently, SOLE employs an internal background Garbage Collector (GC). Mempool structures natively attach an anti-spoofable internal timestamp (`MempoolItem`) and periodically evict structures persisting beyond a 1-hour Time-To-Live (TTL).
+## 5. Consensus: Our Proof of Authority
 
-### Metadata (OP_RETURN)
-Nodes natively support binding up to 80-byte UTF-8 string payloads explicitly inside unspendable 0-value `PubKeyHash` outputs. The validator logic intercepts these payloads via `IsOPReturn()` calculations and explicitly denies them induction into the active caching vectors of BadgerDB, securely recording the memos in the immutable block history without bloating active ledger memory.
+We don't waste electricity mining. Instead, we trust established identities. 
 
-## 5. Merkle Tree Implementation
+### Who forges blocks?
+Only authorized validators—like the **Department of Engineering**, the **Rectorate**, or specific campus labs—can add blocks to the chain. They forge a new block exactly every **10 seconds**. Every block header is signed by a validator's key, so the network knows exactly who to trust.
 
-Integrity at the block level relies on a full **Binary Merkle Tree**. 
-Transaction identifiers are hashed symmetrically to trace a single **Merkle Root**, integrated into the block header prior to consensus hashing. In scenarios involving odd-numbered transaction vectors, the final leaf node duplicates to preserve symmetric topology. The implementation inherently supports Simple Payment Verification (SPV) proofs ($O(\log N)$).
+## 6. Tokenomics: The Unisalento Model
 
-## 6. Consensus Mechanism: Hardened Proof of Authority (PoA)
+We wanted an economic model that feels alive during a semester.
 
-Network consensus relies on a curated list of authorized public identities (Validators). Nodes cross-reference block signatures against an immutable hex-encoded whitelist (`consensus.go`).
+*   **Units**: 1 SOLE equals $10^8$ Photons. 
+*   **Genesis**: We started with 5,000,000 SOLE in the admin wallet to bootstrap the ecosystem.
+*   **The Reward**: Validators get 10 SOLE for every block they forge.
+*   **Halving**: The reward drops by half every 195,500 blocks. 
+*   **Hard Cap**: We will never have more than **8,910,000 SOLE**.
 
-### Cryptographic Rate Limiting
-To mitigate identity-hijacking and Distributed Denial of Service (DDoS) exploitation, the PoA loop implements cryptographic spam prevention:
-1.  **Symbolic Difficulty**: Forging block headers requires an incremental `Nonce` search enforcing a minimum target condition (e.g., `TargetZeros = 1` initiating bytes must resolve strictly to `0x00`). 
-2.  **Temporal Drift**: Headers must satisfy strictly monotonic temporal rules and cannot exceed a predefined positive clock drift (`DriftTolerance = 1 * time.Minute`) against synchronizing peers.
+## 7. Networking & Real-time Events
 
-### Strict Head Signature Binding
-Validator ECDSA signatures are strictly mapped against the deterministic `SHA-256` header array (`PrevHash + MerkleRoot + Timestamp + Height + Nonce`). The signature payload is entirely isolated from the hash generation function, comprehensively resolving malleability vector vulnerabilities.
+### LibP2P
+We use **Libp2p** for p2p communication (protocol `/sole/3.0.0`). We added mutex guards to the peer maps and mempools so the node stays stable even if it’s getting hammered with traffic during a busy exam session.
 
-## 7. Economic Model (Tokenomics)
+### Live Streams
+If you’re building an app for SOLE, you don't need to poll the API. You can hook into our WebSocket hubs:
+*   `/ws/mempool`: Get a ping the second a new transaction hits the network.
+*   `/ws/blocks`: Get notified as soon as a block is forged.
 
-The economic issuance dynamically mimics deflationary issuance matrices.
+## 8. Join the Ecosystem
 
-*   **Precision Unit**: The fundamental ledger unit is the Photon (1 SOLE = $10^8$ Photons).
-*   **Maximum Supply Cap**: Structurally restricted to 19,550,000 SOLE (honoring the 1955 founding year of Unisalento).
-*   **Issuance Schedule**: Initial block reward dictates 50 SOLE per block, subjected to strict integer division (Halving) precisely every 195,500 blocks. After 64 cycles, emission halts entirely.
-
-## 8. Network Operations
-
-Distributed consensus operates over the **Libp2p** protocol stack (`/sole/1.0.0`). 
-Local network traversal leverages `mDNS` multicasting for transparent LAN peering. Extranet operations synchronize through hardcoded WAN bootnodes establishing persistent `TCP/QUIC` socket tunnels through standard NAT barriers. Protocol state is handled via standardized network structures (`Version`, `Inv`, `GetData`, `Block`, `Tx`).
-
-## 9. Ecosystem & UX
-
-Complementing the core Go CLI and daemon is **Swallet**, a modern Python-based desktop application bridging interactions via the node's JSON REST API. 
-
-*   **Libadwaita Design**: Fluid GTK4 layouts adhering strictly to GNOME Human Interface Guidelines (HIG).
-*   **State Telemetry**: Multi-Wallet support engineered with seamless state teardown routines.
-*   **Transaction Calculus**: Dynamic UTXO traversal accurately identifying "Sender" and "Recipient" alignments natively from disparate cryptographic inputs, avoiding structural indexing limits overhead.
-*   **Encrypted Exports**: Core Pillow/Qrcode integrations synthesizing cold-storage paper wallets protected by master password gating flows.
+*   **SOLE CLI**: The Swiss Army knife for the network. Use it to run a node or recover your wallet.
+*   **Swallet**: Our desktop and mobile app. It looks great and handles the BIP39 complexity for you.
+*   **REST API**: If you want to build your own tools, the API is there for you.
