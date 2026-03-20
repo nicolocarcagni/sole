@@ -92,7 +92,46 @@ This starts the P2P networking and the REST API server. If you’re an authorize
 
 ---
 
-## 4. Sending SOLE (`tx`)
+## 4. Node Configuration (`config.yaml`)
+
+Since v3.0.0, you don't have to pass 10 flags every time you start your node. You can save your settings in a `config.yaml` file in the same folder as the executable.
+
+### Precedence
+1. **CLI Flags (Highest):** If you pass a flag (e.g., `--port 3030`), it always overrides everything else. Great for quick tests.
+2. **`config.yaml` (Persistent):** Your saved settings for the node.
+3. **Hardcoded Defaults (Lowest):** If the flag isn't there and the YAML doesn't mention it, we use the built-in defaults (Port 3000, API 8080).
+
+### Example `config.yaml`
+To get started, copy `config.example.yaml` to `config.yaml` and edit it:
+
+```yaml
+node:
+  port: 3000
+  listen: "0.0.0.0"
+  miner: "1HSYNy8y..." # Your validator address
+
+network:
+  bootnodes: "/ip4/1.2.3.4/tcp/3000/p2p/..."
+
+api:
+  port: 8080
+```
+
+### System configuration
+You just need:
+
+```ini
+[Service]
+ExecStart=/home/sole/sole-cli node start
+WorkingDirectory=/home/sole/
+User=sole
+```
+
+The node will automatically pick up `config.yaml` from the `WorkingDirectory`.
+
+---
+
+## 5. Sending SOLE (`tx`)
 
 Actually moving value on the network.
 

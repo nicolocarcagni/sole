@@ -1,14 +1,11 @@
 # SOLE API Reference
 **Building apps on the campus network.**
 
-The SOLE node includes a simple REST API. This is what you'll use if you're building a dashboard, a web wallet, or a research tool for a university project. By default, it listens on port `8080`.
+The SOLE node includes a simple REST API. By default, it listens on port `8080`, but you can change this in your `config.yaml` or with the `--api-port` flag.
 
-## Keeping things fair (Rate Limiting)
-To make sure nobody accidentally crashes the node during testing, we've added some basic rate limits.
+## Rate Limiting
 *   **Reading data (`GET`)**: 20 requests per second.
 *   **Sending actions (`POST`)**: 5 requests per second.
-
-If you hit these limits, the node will politely ask you to wait.
 
 ---
 

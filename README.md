@@ -45,10 +45,12 @@ To bootstrap the local persistence layer and immediately join the public P2P net
 
 ```bash
 ./sole-cli chain init
+cp config.example.yaml config.yaml  # Optional: edit for persistent settings
 ./sole-cli node start
 ```
 
 This sequence automatically generates a persistent P2P identity (`node_key.dat`), attempts to reach the configured bootstrap nodes, and begins block synchronization.
+
 
 ## Documentation
 
