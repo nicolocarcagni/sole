@@ -398,7 +398,12 @@ func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, u
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
 	tx.ID = tx.Hash()
-	utxoSet.Blockchain.SignTransaction(&tx, wallet.GetPrivateKey())
+	privKey, err := wallet.GetPrivateKey()
+	if err != nil {
+		fmt.Printf("⛔ ERROR: Failed to get private key for %s: %v\n", from, err)
+		os.Exit(1)
+	}
+	utxoSet.Blockchain.SignTransaction(&tx, privKey)
 
 	return &tx
 }

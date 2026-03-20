@@ -338,7 +338,11 @@ func startNode(cmd *cobra.Command, args []string) {
 			os.Exit(1)
 		}
 
-		privKey := wallet.GetPrivateKey()
+		privKey, err := wallet.GetPrivateKey()
+		if err != nil {
+			fmt.Printf("⛔ ERROR: Private Key not valid for address %s: %v\n", nodeMiner, err)
+			os.Exit(1)
+		}
 		validatorPrivKey = &privKey
 
 		// Print validator public key for registration
@@ -534,8 +538,7 @@ func getBalance(cmd *cobra.Command, args []string) {
 	defer chain.Database.Close()
 
 	balance := int64(0)
-	pubKeyHash, _ := Base58Decode([]byte(addressFlag))
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
+	pubKeyHash, _ := ExtractPubKeyHash(addressFlag)
 	utxos := UTXOSet.FindUnspentOutputs(pubKeyHash)
 
 	for _, out := range utxos {
@@ -709,7 +712,11 @@ func printWallet(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	privKey := wallet.GetPrivateKey()
+	privKey, err := wallet.GetPrivateKey()
+	if err != nil {
+		fmt.Printf("⛔ ERROR: Private Key not valid for address %s: %v\n", addressFlag, err)
+		os.Exit(1)
+	}
 	// Using hex.EncodeToString as requested for clarity
 	pubKeyHex := hex.EncodeToString(wallet.PublicKey)
 	privKeyHex := hex.EncodeToString(privKey.D.Bytes())
