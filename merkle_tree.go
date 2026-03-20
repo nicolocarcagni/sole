@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 )
 
 // MerkleTree represents a Merkle tree
@@ -66,4 +69,65 @@ func NewMerkleNode(left, right *MerkleNode, data []byte) *MerkleNode {
 	mNode.Right = right
 
 	return &mNode
+}
+
+// MerkleStep represents a node in the proof path
+type MerkleStep struct {
+	Hash      string `json:"hash"`
+	Direction string `json:"direction"` // "L" (Left) or "R" (Right)
+}
+
+// GetMerklePath extracts the Merkle Proof path for a target transaction ID
+func (m *MerkleTree) GetMerklePath(txID []byte) ([]MerkleStep, error) {
+	if m.RootNode == nil {
+		return nil, fmt.Errorf("merkle tree is empty")
+	}
+
+	targetHashBytes := sha256.Sum256(txID)
+	
+	path, found := m.RootNode.findPath(targetHashBytes[:])
+	if !found {
+		return nil, fmt.Errorf("transaction not found in merkle tree")
+	}
+
+	return path, nil
+}
+
+// findPath recursively traverses the tree to find the target leaf and builds the path
+func (n *MerkleNode) findPath(targetHash []byte) ([]MerkleStep, bool) {
+	// Base Case: Leaf Node
+	if n.Left == nil && n.Right == nil {
+		if bytes.Equal(n.Data, targetHash) {
+			return []MerkleStep{}, true
+		}
+		return nil, false
+	}
+
+	// Search Left Branch
+	if n.Left != nil {
+		path, found := n.Left.findPath(targetHash)
+		if found {
+			// Sibling is the Right node
+			step := MerkleStep{
+				Hash:      hex.EncodeToString(n.Right.Data),
+				Direction: "R",
+			}
+			return append(path, step), true
+		}
+	}
+
+	// Search Right Branch
+	if n.Right != nil {
+		path, found := n.Right.findPath(targetHash)
+		if found {
+			// Sibling is the Left node
+			step := MerkleStep{
+				Hash:      hex.EncodeToString(n.Left.Data),
+				Direction: "L",
+			}
+			return append(path, step), true
+		}
+	}
+
+	return nil, false
 }
