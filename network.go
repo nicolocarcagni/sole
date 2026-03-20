@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	protocolID         = "/sole/2.0.0"
+	protocolID         = "/sole/3.0.0"
 	discoveryNamespace = "sole_p2p"
 )
 
@@ -52,6 +52,7 @@ type Server struct {
 	MinerAddr        string
 	ValidatorPrivKey *ecdsa.PrivateKey
 	KnownPeers       map[string]string // PeerID string -> Addr
+	KnownPeersMux    sync.RWMutex
 	Mempool          map[string]MempoolItem
 	MempoolMux       sync.Mutex
 
@@ -410,12 +411,18 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 	dec.Decode(&payload)
 
 	// Duplicate Handshake Check
-	if _, ok := s.KnownPeers[peerID.String()]; ok {
+	s.KnownPeersMux.RLock()
+	_, ok := s.KnownPeers[peerID.String()]
+	s.KnownPeersMux.RUnlock()
+	if ok {
 		return
 	}
 
 	fmt.Printf("🤝 [Handshake] Connected to: %s (Remote) | Version: %d | BestHeight: %d\n", ShortID(peerID.String()), payload.Version, payload.BestHeight)
+	
+	s.KnownPeersMux.Lock()
 	s.KnownPeers[peerID.String()] = payload.AddrFrom
+	s.KnownPeersMux.Unlock()
 
 	myBestHeight := s.Blockchain.GetBestHeight()
 	foreignerBestHeight := payload.BestHeight
@@ -441,12 +448,10 @@ func (s *Server) HandleInv(request []byte, peerID peer.ID) {
 	dec.Decode(&payload)
 
 	if payload.Type == "block" {
-		// Filter out blocks we already have
 		var needed [][]byte
 		for _, blockHash := range payload.Items {
 			_, err := s.Blockchain.GetBlock(blockHash)
 			if err != nil {
-				// Block not found locally → we need it
 				needed = append(needed, blockHash)
 			}
 		}
@@ -461,7 +466,6 @@ func (s *Server) HandleInv(request []byte, peerID peer.ID) {
 				s.SendGetData(peerID, "block", b)
 			}
 		} else {
-			// All blocks already present, end IBD if active
 			s.BlockBufferMux.Lock()
 			if s.IsSyncing {
 				s.IsSyncing = false
@@ -472,9 +476,12 @@ func (s *Server) HandleInv(request []byte, peerID peer.ID) {
 	}
 	if payload.Type == "tx" {
 		if len(payload.Items) > 0 {
-			txID := payload.Items[0]
-			if s.Mempool[hex.EncodeToString(txID)].Tx.ID == nil {
-				s.SendGetData(peerID, "tx", txID)
+			txID := hex.EncodeToString(payload.Items[0])
+			s.MempoolMux.Lock()
+			exists := s.Mempool[txID].Tx.ID != nil
+			s.MempoolMux.Unlock()
+			if !exists {
+				s.SendGetData(peerID, "tx", payload.Items[0])
 			}
 		}
 	}
@@ -503,7 +510,9 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	if payload.Type == "tx" {
 		txID := hex.EncodeToString(payload.ID)
 		fmt.Printf("📦 [P2P] Data Request (Tx) | Hash: %s... | Peer: %s\n", txID[:8], ShortID(peerID.String()))
+		s.MempoolMux.Lock()
 		item, ok := s.Mempool[txID]
+		s.MempoolMux.Unlock()
 		if !ok {
 			fmt.Printf("⚠️  Object (Tx) not found in Mempool: %s\n", txID)
 			return
