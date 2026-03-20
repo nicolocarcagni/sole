@@ -37,22 +37,14 @@ var rootCmd = &cobra.Command{
 }
 
 var (
-	addressFlag   string
-	fromFlag      string
-	toFlag        string
-	amountFlag    float64
-	feeFlag       float64
-	memoFlag      string
-	portFlag      int
-	minerFlag     string
-	apiPortFlag   int
-	dryRunFlag    bool
-	listenFlag    string // Bind Address (0.0.0.0)
-	publicIPFlag  string // Announce Address
-	publicDNSFlag string // Announce Domain (node.sole.com)
-	bootnodesFlag string // Comma-separated bootnodes
-	apiListenFlag string // API Bind Address (0.0.0.0)
-	privKeyFlag   string // Private Key Hex for import
+	addressFlag string
+	fromFlag    string
+	toFlag      string
+	amountFlag  float64
+	feeFlag     float64
+	memoFlag    string
+	dryRunFlag  bool
+	privKeyFlag string // Private Key Hex for import
 )
 
 func Execute() {
@@ -258,14 +250,14 @@ func init() {
 		Short: "Start the P2P node",
 		Run:   startNode,
 	}
-	nodeStartCmd.Flags().IntVar(&portFlag, "port", 3000, "P2P Port")
-	nodeStartCmd.Flags().StringVar(&listenFlag, "listen", "0.0.0.0", "Local Listen IP for P2P")
-	nodeStartCmd.Flags().StringVar(&publicIPFlag, "public-ip", "", "Public IP Address (Announce)")
-	nodeStartCmd.Flags().StringVar(&publicDNSFlag, "public-dns", "", "Public Domain Name (Announce)")
-	nodeStartCmd.Flags().StringVar(&bootnodesFlag, "bootnodes", "", "Comma-separated list of Bootnodes")
-	nodeStartCmd.Flags().StringVar(&minerFlag, "miner", "", "Miner address")
-	nodeStartCmd.Flags().IntVar(&apiPortFlag, "api-port", 8080, "API Server Port")
-	nodeStartCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Local Listen IP for API")
+	nodeStartCmd.Flags().Int("port", 3000, "P2P Port")
+	nodeStartCmd.Flags().String("listen", "0.0.0.0", "Local Listen IP for P2P")
+	nodeStartCmd.Flags().String("public-ip", "", "Public IP Address (Announce)")
+	nodeStartCmd.Flags().String("public-dns", "", "Public Domain Name (Announce)")
+	nodeStartCmd.Flags().String("bootnodes", "", "Comma-separated list of Bootnodes")
+	nodeStartCmd.Flags().String("miner", "", "Miner address")
+	nodeStartCmd.Flags().Int("api-port", 8080, "API Server Port")
+	nodeStartCmd.Flags().String("api-listen", "0.0.0.0", "Local Listen IP for API")
 	nodeCmd.AddCommand(nodeStartCmd)
 
 	viper.BindPFlag("node.port", nodeStartCmd.Flags().Lookup("port"))
@@ -395,7 +387,7 @@ func startNode(cmd *cobra.Command, args []string) {
 	go server.Start()
 
 	// Start Periodic Mining Loop (if miner)
-	if minerFlag != "" {
+	if nodeMiner != "" {
 		go server.StartMiningLoop()
 	}
 
