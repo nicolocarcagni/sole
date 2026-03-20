@@ -84,7 +84,7 @@ func printUsage(cmd *cobra.Command, args []string) {
   ____) | |__| | |____| |____ 
  |_____/ \____/|______|______|
 ` + ColorReset)
-	fmt.Println(ColorBold + "   SOLE Blockchain CLI v2.0" + ColorReset)
+	fmt.Println(ColorBold + "   SOLE Blockchain CLI v3.0.0" + ColorReset)
 	fmt.Println("   (c) 2026 Università del Salento")
 	fmt.Println()
 
@@ -99,6 +99,7 @@ func printUsage(cmd *cobra.Command, args []string) {
 	fmt.Fprintln(w, "  "+ColorGreen+"create"+ColorReset+"\tGenerates a new keypair.")
 	fmt.Fprintln(w, "  "+ColorGreen+"list"+ColorReset+"\tLists saved addresses.")
 	fmt.Fprintln(w, "  "+ColorGreen+"import"+ColorReset+"\tImports a private key (--key <HEX>).")
+	fmt.Fprintln(w, "  "+ColorGreen+"recover"+ColorReset+"\tRecovers a wallet from 12-word mnemonic.")
 	fmt.Fprintln(w, "  "+ColorGreen+"remove"+ColorReset+"\tRemoves a wallet (--address <ADDR>).")
 	fmt.Fprintln(w, "  "+ColorGreen+"balance"+ColorReset+"\tChecks balance of an address (--address <ADDR>).")
 	fmt.Fprintln(w, "  "+ColorGreen+"export"+ColorReset+"\tExports private key (--address <ADDR>).")
@@ -159,6 +160,13 @@ func init() {
 	walletImportCmd.Flags().StringVar(&privKeyFlag, "key", "", "Private Key in Hex format")
 	walletImportCmd.MarkFlagRequired("key")
 	walletCmd.AddCommand(walletImportCmd)
+
+	var walletRecoverCmd = &cobra.Command{
+		Use:   "recover",
+		Short: "Recovers a wallet from a 12-word Mnemonic Phrase",
+		Run:   runRecoverWallet,
+	}
+	walletCmd.AddCommand(walletRecoverCmd)
 
 	var walletRemoveCmd = &cobra.Command{
 		Use:   "remove",
@@ -401,9 +409,14 @@ func runInit(cmd *cobra.Command, args []string) {
 
 func createWallet(cmd *cobra.Command, args []string) {
 	wallets, _ := CreateWallets()
-	address := wallets.AddWallet()
+	address, mnemonic := wallets.AddWallet()
 	wallets.SaveToFile()
 
+	fmt.Println(ColorRed + "⚠️  IMPORTANT: Write down these 12 words." + ColorReset)
+	fmt.Println(ColorYellow + "If you lose them, you lose your SOLE forever." + ColorReset)
+	fmt.Println()
+	fmt.Printf("Mnemonic Phrase: %s\n", mnemonic)
+	fmt.Println()
 	fmt.Printf("New wallet created: %s\n", address)
 }
 
@@ -417,6 +430,27 @@ func runImportWallet(cmd *cobra.Command, args []string) {
 	wallets.SaveToFile()
 
 	fmt.Printf("Success! Wallet imported. Address: %s\n", address)
+}
+
+func runRecoverWallet(cmd *cobra.Command, args []string) {
+	mnemonic := strings.Join(args, " ")
+	mnemonic = strings.TrimSpace(mnemonic)
+
+	if mnemonic == "" {
+		fmt.Println(ColorRed + "⛔ ERROR: You must provide the 12-word mnemonic phrase as arguments." + ColorReset)
+		os.Exit(1)
+	}
+
+	wallets, _ := CreateWallets()
+	
+	address, err := wallets.RecoverWallet(mnemonic)
+	if err != nil {
+		fmt.Println(ColorRed + "❌ Error: " + err.Error() + ColorReset)
+		os.Exit(1)
+	}
+
+	wallets.SaveToFile()
+	fmt.Printf("✅ Success! Wallet recovered. Address: %s\n", address)
 }
 
 func runRemoveWallet(cmd *cobra.Command, args []string) {
@@ -608,10 +642,11 @@ func printChain(cmd *cobra.Command, args []string) {
 	for {
 		block := iter.Next()
 
-		fmt.Printf("=== Block %d ===\n", block.Height)
-		fmt.Printf("Hash: %x\n", block.Hash)
-		fmt.Printf("Prev. Hash: %x\n", block.PrevBlockHash)
-		pow := true // No PoW validation implemented properly yet, just flag
+		fmt.Printf("============ Block %x ============\n", block.Hash)
+		fmt.Printf("Height:    %d\n", block.Height)
+		fmt.Printf("Prev. hash: %x\n", block.PrevBlockHash)
+		fmt.Printf("Hash:      %x\n", block.Hash)
+		pow := true
 		fmt.Printf("PoA Valid: %s\n", strconv.FormatBool(pow))
 		fmt.Println("Transactions:")
 		for _, tx := range block.Transactions {
@@ -637,7 +672,8 @@ func printWallet(cmd *cobra.Command, args []string) {
 
 	wallet := wallets.GetWalletRef(addressFlag)
 	if wallet == nil {
-		log.Panic("Error: Wallet not found for this address")
+		fmt.Printf("⛔ Error: Wallet not found for this address: %s\n", addressFlag)
+		os.Exit(1)
 	}
 
 	privKey := wallet.GetPrivateKey()

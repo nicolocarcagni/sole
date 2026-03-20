@@ -466,18 +466,14 @@ func (chain *Blockchain) GetBlockSubsidy(height int) int64 {
 		return 0
 	}
 
-	// Note: We rely on the geometric series sum property:
-	// Sum = Initial * Interval * 2 = 50 * 195500 * 2 = 19,550,000.
-	// So strictly checking TotalSupply from DB is not strictly required to enforce the cap mathematically.
-
 	return subsidy
 }
 
 // FindUnspentTransactions returns a list of transactions containing unspent outputs
-func (chain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
+func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
 	var unspentTXs []Transaction
 	spentTXOs := make(map[string][]int)
-	iter := chain.Iterator()
+	iter := bc.Iterator()
 
 	for {
 		block := iter.Next()
@@ -487,7 +483,6 @@ func (chain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transactio
 
 		Outputs:
 			for outIdx, out := range tx.Vout {
-				// Was the output spent?
 				if spentTXOs[txID] != nil {
 					for _, spentOut := range spentTXOs[txID] {
 						if spentOut == outIdx {
@@ -501,12 +496,10 @@ func (chain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transactio
 				}
 			}
 
-			if !tx.IsCoinbase() {
-				for _, in := range tx.Vin {
-					if in.UsesKey(pubKeyHash) {
-						inTxID := hex.EncodeToString(in.Txid)
-						spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
-					}
+			if tx.IsCoinbase() == false {
+				for _, vin := range tx.Vin {
+					inTxID := hex.EncodeToString(vin.Txid)
+					spentTXOs[inTxID] = append(spentTXOs[inTxID], vin.Vout)
 				}
 			}
 		}
@@ -520,49 +513,56 @@ func (chain *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transactio
 }
 
 // FindTransactions searches for all transactions related to an address
-func (chain *Blockchain) FindTransactions(address string) []Transaction {
-	var txs []Transaction
-
-	pubKeyHash, err := Base58Decode([]byte(address))
+func (bc *Blockchain) FindTransactions(address string) []Transaction {
+	var transactions []Transaction
+	pubKeyHash, err := ExtractPubKeyHash(address)
 	if err != nil {
-		fmt.Printf("Error decoding address: %s\n", err)
-		return txs
+		return transactions
 	}
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-
-	iter := chain.Iterator()
+	iter := bc.Iterator()
 
 	for {
 		block := iter.Next()
 
 		for _, tx := range block.Transactions {
-			// Check Outputs (Receiver)
-			for _, out := range tx.Vout {
-				if out.IsLockedWithKey(pubKeyHash) {
-					txs = append(txs, *tx)
-					goto NextTx // Avoid adding same tx twice
-				}
-			}
-
-			// Check Inputs (Sender)
-			if !tx.IsCoinbase() {
-				for _, in := range tx.Vin {
-					if in.UsesKey(pubKeyHash) {
-						txs = append(txs, *tx)
-						goto NextTx
+			if tx.IsCoinbase() {
+				for _, out := range tx.Vout {
+					if out.IsLockedWithKey(pubKeyHash) {
+						transactions = append(transactions, *tx)
+						break
 					}
 				}
-			}
+			} else {
+				isRelated := false
+				for _, vin := range tx.Vin {
+					if bytes.Equal(HashPubKey(vin.PubKey), pubKeyHash) {
+						isRelated = true
+						break
+					}
+				}
+				if !isRelated {
+					for _, out := range tx.Vout {
+						if out.IsLockedWithKey(pubKeyHash) {
+							isRelated = true
+							break
+						}
+					}
+				}
 
-		NextTx:
+				if isRelated {
+					transactions = append(transactions, *tx)
+				}
+			}
 		}
 
 		if len(block.PrevBlockHash) == 0 {
 			break
 		}
 	}
-	return txs
+
+	return transactions
 }
+
 
 // FindUTXO finds all unspent transaction outputs and returns them
 func (chain *Blockchain) FindUTXO() map[string]TxOutputs {
