@@ -1,0 +1,38 @@
+# SOLE Blockchain Node Configuration Template (v3.0.0)
+# This file defines the permanent settings for your SOLE node.
+# The hierarchy for settings is: CLI Flags > config.yaml > Default Values
+# Meaning any setting declared via CLI (e.g., --port 3030) will override what's in this file.
+
+node:
+  # The P2P network port for incoming connections from other SOLE nodes.
+  # Default: 3000
+  port: 3000
+
+  # Local IP to bind the P2P network port. Use "0.0.0.0" for all interfaces.
+  # Default: "0.0.0.0"
+  listen: "0.0.0.0"
+
+  # The address of the miner authorizing blocks.
+  # If left empty, the node will not mine.
+  miner: ""
+
+network:
+  # A comma-separated list of known nodes to bootstrap the P2P connection.
+  # Example: "/ip4/198.51.100.1/tcp/3000/p2p/Qm..."
+  # Default: ""
+  bootnodes: ""
+
+  # The public IP address to broadcast to other P2P nodes. Optional.
+  public_ip: ""
+
+  # The public domain name (DNS) to broadcast to other P2P nodes. Optional.
+  public_dns: ""
+
+api:
+  # The port on which the REST API server will listen.
+  # Default: 8080
+  port: 8080
+
+  # Local IP to bind the API server port.
+  # Default: "0.0.0.0"
+  listen: "0.0.0.0"

@@ -1,4 +1,4 @@
-# Ignora i binari compilati
+# Ignore compiled binaries
 sole-cli
 sole-cli.exe
 *.exe
@@ -6,25 +6,28 @@ sole-cli.exe
 *.so
 *.dylib
 
-# Ignora i file chiave/wallet
+# Ignore key/wallet files
 *.dat
 *.key
 *.pem
 
-# Ignora le cartelle del database locale
+# Ignore local database folders
 db/
 db_*
 data/
 tmp/
 
-# Ignora file di sistema/IDE
+# Ignore system/IDE files
 .DS_Store
 .idea/
 .vscode/
 
-# Ignora file di log
+# Ignore log files
 *.log
 
-# Ignora file di test
+# Ignore test files
 *.sh
 *.txt
+
+# Ignore config file
+config.yaml

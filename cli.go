@@ -17,6 +17,7 @@ import (
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // ANSI Colors
@@ -129,7 +130,24 @@ func printUsage(cmd *cobra.Command, args []string) {
 	fmt.Println()
 }
 
+func initConfig() {
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			fmt.Println("ℹ️  No config file found, relying on flags/defaults")
+		} else {
+			fmt.Printf("⚠️  Config file error: %v\n", err)
+		}
+	} else {
+		fmt.Printf("ℹ️  Using config file: %s\n", viper.ConfigFileUsed())
+	}
+}
+
 func init() {
+	cobra.OnInitialize(initConfig)
 	// --- WALLET COMMANDS ---
 	var walletCmd = &cobra.Command{
 		Use:   "wallet",
@@ -252,6 +270,15 @@ func init() {
 	nodeStartCmd.Flags().StringVar(&apiListenFlag, "api-listen", "0.0.0.0", "Local Listen IP for API")
 	nodeCmd.AddCommand(nodeStartCmd)
 
+	viper.BindPFlag("node.port", nodeStartCmd.Flags().Lookup("port"))
+	viper.BindPFlag("node.listen", nodeStartCmd.Flags().Lookup("listen"))
+	viper.BindPFlag("network.public_ip", nodeStartCmd.Flags().Lookup("public-ip"))
+	viper.BindPFlag("network.public_dns", nodeStartCmd.Flags().Lookup("public-dns"))
+	viper.BindPFlag("network.bootnodes", nodeStartCmd.Flags().Lookup("bootnodes"))
+	viper.BindPFlag("node.miner", nodeStartCmd.Flags().Lookup("miner"))
+	viper.BindPFlag("api.port", nodeStartCmd.Flags().Lookup("api-port"))
+	viper.BindPFlag("api.listen", nodeStartCmd.Flags().Lookup("api-listen"))
+
 	// --- TX COMMANDS ---
 	var txCmd = &cobra.Command{
 		Use:   "tx",
@@ -277,7 +304,16 @@ func init() {
 }
 
 func startNode(cmd *cobra.Command, args []string) {
-	fmt.Printf("Starting SOLE node on port %d...\n", portFlag)
+	nodePort := viper.GetInt("node.port")
+	nodeListen := viper.GetString("node.listen")
+	netPublicIP := viper.GetString("network.public_ip")
+	netPublicDNS := viper.GetString("network.public_dns")
+	netBootnodesStr := viper.GetString("network.bootnodes")
+	nodeMiner := viper.GetString("node.miner")
+	apiPort := viper.GetInt("api.port")
+	apiListen := viper.GetString("api.listen")
+
+	fmt.Printf("Starting SOLE node on port %d...\n", nodePort)
 
 	if !DBExists() {
 		fmt.Println("⚠️  Database not found. Did you run './sole-cli chain init'?")
@@ -286,22 +322,22 @@ func startNode(cmd *cobra.Command, args []string) {
 
 	var validatorPrivKey *ecdsa.PrivateKey
 
-	if minerFlag != "" {
-		fmt.Printf("Forging enabled for address: %s\n", minerFlag)
+	if nodeMiner != "" {
+		fmt.Printf("Forging enabled for address: %s\n", nodeMiner)
 
 		// Load wallet for this address
 		wallets, err := CreateWallets()
 		if err != nil {
 			if os.IsNotExist(err) {
-				fmt.Printf("⛔ ERROR: Private Key not found for address %s. Wallet file missing.\n", minerFlag)
+				fmt.Printf("⛔ ERROR: Private Key not found for address %s. Wallet file missing.\n", nodeMiner)
 				os.Exit(1)
 			}
 			log.Panic("Error loading wallets:", err)
 		}
 
-		wallet := wallets.GetWalletRef(minerFlag)
+		wallet := wallets.GetWalletRef(nodeMiner)
 		if wallet == nil {
-			fmt.Printf("⛔ ERROR: Private Key not found for address %s. Cannot mine without owning the wallet.\n", minerFlag)
+			fmt.Printf("⛔ ERROR: Private Key not found for address %s. Cannot mine without owning the wallet.\n", nodeMiner)
 			os.Exit(1)
 		}
 
@@ -314,7 +350,7 @@ func startNode(cmd *cobra.Command, args []string) {
 
 		// Authorization Check
 		if !IsAuthorizedValidator(pubKeyHex) {
-			fmt.Printf("⛔ ERROR: Address %s is not an Authorized Validator. Mining aborted.\n", minerFlag)
+			fmt.Printf("⛔ ERROR: Address %s is not an Authorized Validator. Mining aborted.\n", nodeMiner)
 			os.Exit(1)
 		}
 		fmt.Println("✅ Authorized Validator recognized. Starting Consensus Engine...")
@@ -322,8 +358,8 @@ func startNode(cmd *cobra.Command, args []string) {
 
 	// Parse bootnodes
 	var bootnodes []string
-	if bootnodesFlag != "" {
-		bootnodes = strings.Split(bootnodesFlag, ",")
+	if netBootnodesStr != "" {
+		bootnodes = strings.Split(netBootnodesStr, ",")
 	}
 
 	// Load Persistent P2P Identity
@@ -335,12 +371,12 @@ func startNode(cmd *cobra.Command, args []string) {
 
 	// Config
 	cfg := ServerConfig{
-		ListenHost: listenFlag,
-		Port:       portFlag,
-		PublicIP:   publicIPFlag,
-		PublicDNS:  publicDNSFlag,
+		ListenHost: nodeListen,
+		Port:       nodePort,
+		PublicIP:   netPublicIP,
+		PublicDNS:  netPublicDNS,
 		Bootnodes:  bootnodes,
-		MinerAddr:  minerFlag,
+		MinerAddr:  nodeMiner,
 		PrivKey:    validatorPrivKey,
 		NodeKey:    privKeyP2P,
 	}
@@ -351,7 +387,7 @@ func startNode(cmd *cobra.Command, args []string) {
 	// defer server.Blockchain.Database.Close()
 
 	// Start API Server
-	go StartRestServer(server, apiListenFlag, apiPortFlag)
+	go StartRestServer(server, apiListen, apiPort)
 
 	// Start P2P Loop (in background)
 	go server.Start()
