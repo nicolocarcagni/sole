@@ -13,7 +13,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// IPRateLimiter mananges rate limiters for each IP
 type IPRateLimiter struct {
 	ips map[string]*rate.Limiter
 	mu  sync.Mutex
@@ -21,7 +20,6 @@ type IPRateLimiter struct {
 	b   int
 }
 
-// NewIPRateLimiter creates a new limiter
 func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
 	i := &IPRateLimiter{
 		ips: make(map[string]*rate.Limiter),
@@ -44,7 +42,6 @@ func NewIPRateLimiter(r rate.Limit, b int) *IPRateLimiter {
 	return i
 }
 
-// GetLimiter returns the limiter for an IP
 func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 	i.mu.Lock()
 	defer i.mu.Unlock()
@@ -58,7 +55,6 @@ func (i *IPRateLimiter) GetLimiter(ip string) *rate.Limiter {
 	return limiter
 }
 
-// RateLimitMiddleware creates a middleware for rate limiting
 func RateLimitMiddleware(limiter *IPRateLimiter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -109,16 +105,16 @@ func CORSMiddleware(next http.Handler) http.Handler {
 			}
 		}()
 
-		// 2. Safe Body Reading (Read and replace properly)
+		// 2. Safe Body Reading
 		if r.Body != nil {
-			bodyBytes, err := io.ReadAll(r.Body)
+			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 			if err == nil {
 				// Restore the body so the underlying handler can read it safely
 				r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 			}
 		}
 
-		// 3. Safe Header Extraction
+		// 3. Headers
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			origin = "*"

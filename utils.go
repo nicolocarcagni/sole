@@ -8,7 +8,6 @@ import (
 	"os"
 )
 
-// ExtractPubKeyHash decodes a Base58 address and strips the version and checksum.
 func ExtractPubKeyHash(address string) ([]byte, error) {
 	pubKeyHash, err := Base58Decode([]byte(address))
 	if err != nil {
@@ -20,7 +19,6 @@ func ExtractPubKeyHash(address string) ([]byte, error) {
 	return pubKeyHash[1 : len(pubKeyHash)-4], nil
 }
 
-// AddressFromPubKeyHash takes a PubKeyHash and returns a Base58 encoded address.
 func AddressFromPubKeyHash(pubKeyHash []byte) string {
 	versionedPayload := append([]byte{version}, pubKeyHash...)
 	checksum := checksum(versionedPayload)
@@ -29,7 +27,6 @@ func AddressFromPubKeyHash(pubKeyHash []byte) string {
 }
 
 
-// IntToHex converts an int64 to a byte array
 func IntToHex(num int64) []byte {
 	buff := new(bytes.Buffer)
 	err := binary.Write(buff, binary.BigEndian, num)
@@ -39,7 +36,6 @@ func IntToHex(num int64) []byte {
 	return buff.Bytes()
 }
 
-// CopyDir copies a directory recursively
 func CopyDir(src string, dst string) error {
 	var err error
 	fds, err := os.ReadDir(src)

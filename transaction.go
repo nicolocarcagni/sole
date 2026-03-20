@@ -21,7 +21,6 @@ type TxOutput struct {
 	PubKeyHash []byte
 }
 
-// Lock signs the output
 func (out *TxOutput) Lock(address []byte) {
 	pubKeyHash, err := ExtractPubKeyHash(string(address))
 	if err != nil {
@@ -30,17 +29,14 @@ func (out *TxOutput) Lock(address []byte) {
 	out.PubKeyHash = pubKeyHash
 }
 
-// IsLockedWithKey checks if the output can be used by the owner of the pubkey
 func (out *TxOutput) IsLockedWithKey(pubKeyHash []byte) bool {
 	return bytes.Equal(out.PubKeyHash, pubKeyHash)
 }
 
-// IsOPReturn checks if the output is a zero-value metadata payload
 func (out *TxOutput) IsOPReturn() bool {
 	return out.Value == 0
 }
 
-// NewTxOutput creates a new TXOutput
 func NewTxOutput(value int64, address string) *TxOutput {
 	txo := &TxOutput{value, nil}
 	txo.Lock([]byte(address))
@@ -51,7 +47,6 @@ type TxOutputs struct {
 	Outputs []TxOutput
 }
 
-// Serialize serializes TxOutputs
 func (outs TxOutputs) Serialize() []byte {
 	var buff bytes.Buffer
 	enc := gob.NewEncoder(&buff)
@@ -62,7 +57,6 @@ func (outs TxOutputs) Serialize() []byte {
 	return buff.Bytes()
 }
 
-// DeserializeOutputs deserializes TxOutputs
 func DeserializeOutputs(data []byte) TxOutputs {
 	var outputs TxOutputs
 	dec := gob.NewDecoder(bytes.NewReader(data))
@@ -80,7 +74,6 @@ type TxInput struct {
 	PubKey    []byte
 }
 
-// UsesKey checks whether the address initiated the transaction
 func (in *TxInput) UsesKey(pubKeyHash []byte) bool {
 	lockingHash := HashPubKey(in.PubKey)
 	return bytes.Equal(lockingHash, pubKeyHash)
@@ -93,7 +86,6 @@ type Transaction struct {
 	Timestamp int64
 }
 
-// Serialize returns a serialized Transaction (Manual Binary Encoding for Interop)
 func (tx Transaction) Serialize() []byte {
 	var encoded bytes.Buffer
 
@@ -123,7 +115,6 @@ func (tx Transaction) Serialize() []byte {
 	return encoded.Bytes()
 }
 
-// DeserializeTransaction decodes a transaction from bytes
 func DeserializeTransaction(data []byte) Transaction {
 	var tx Transaction
 	reader := bytes.NewReader(data)
@@ -184,7 +175,6 @@ func DeserializeTransaction(data []byte) Transaction {
 	return tx
 }
 
-// Hash returns the hash of the Transaction
 func (tx *Transaction) Hash() []byte {
 	var hash [32]byte
 
@@ -196,7 +186,6 @@ func (tx *Transaction) Hash() []byte {
 	return hash[:]
 }
 
-// SerializeForHash returns a deterministic byte slice for hashing
 func (tx Transaction) SerializeForHash() []byte {
 	var encoded bytes.Buffer
 
@@ -220,7 +209,6 @@ func (tx Transaction) SerializeForHash() []byte {
 	return encoded.Bytes()
 }
 
-// Sign signs each input of a Transaction using the provided private key.
 func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transaction) {
 	if tx.IsCoinbase() {
 		return
@@ -256,7 +244,6 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 	}
 }
 
-// Verify verifies signatures of Transaction inputs
 func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 	if tx.IsCoinbase() {
 		return true
@@ -321,7 +308,6 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 	return true
 }
 
-// TrimmedCopy creates a trimmed copy of Transaction to be used in signing
 func (tx *Transaction) TrimmedCopy() Transaction {
 	var inputs []TxInput
 	var outputs []TxOutput
@@ -339,12 +325,10 @@ func (tx *Transaction) TrimmedCopy() Transaction {
 	return txCopy
 }
 
-// IsCoinbase checks whether the transaction is coinbase
 func (tx Transaction) IsCoinbase() bool {
 	return len(tx.Vin) == 1 && len(tx.Vin[0].Txid) == 0 && tx.Vin[0].Vout == -1
 }
 
-// NewCoinbaseTX creates a new coinbase transaction
 func NewCoinbaseTX(to, data string, amount int64) *Transaction {
 	if data == "" {
 		data = fmt.Sprintf("Reward to '%s'", to)
@@ -358,7 +342,6 @@ func NewCoinbaseTX(to, data string, amount int64) *Transaction {
 	return &tx
 }
 
-// NewUTXOTransaction creates a new transaction
 func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet) *Transaction {
 	var inputs []TxInput
 	var outputs []TxOutput

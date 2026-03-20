@@ -42,20 +42,17 @@ func getBadgerOptions(path string) badger.Options {
 	return opts
 }
 
-// Blockchain keeps a sequence of Blocks
 type Blockchain struct {
 	LastHash []byte
 	Database *badger.DB
 	Mux      sync.Mutex
 }
 
-// BlockchainIterator is used to iterate over blockchain blocks
 type BlockchainIterator struct {
 	CurrentHash []byte
 	Database    *badger.DB
 }
 
-// InitBlockchain creates a new blockchain with Genesis Block
 func InitBlockchain() (*Blockchain, error) {
 	var lastHash []byte
 
@@ -104,7 +101,6 @@ func InitBlockchain() (*Blockchain, error) {
 	return &blockchain, nil
 }
 
-// ContinueBlockchain continues an existing blockchain
 func ContinueBlockchain(address string) *Blockchain {
 	if !DBExists() {
 		fmt.Println("No existing blockchain found. Create one first.")
@@ -136,7 +132,6 @@ func ContinueBlockchain(address string) *Blockchain {
 	return &chain
 }
 
-// ContinueBlockchainReadOnly continues an existing blockchain in Read-Only mode
 func ContinueBlockchainReadOnly(address string) *Blockchain {
 	if !DBExists() {
 		fmt.Println("No existing blockchain found. Create one first.")
@@ -169,7 +164,6 @@ func ContinueBlockchainReadOnly(address string) *Blockchain {
 	return &chain
 }
 
-// ContinueBlockchainSnapshot continues a blockchain from a specific path
 func ContinueBlockchainSnapshot(customPath string) *Blockchain {
 	if _, err := os.Stat(customPath + "/MANIFEST"); os.IsNotExist(err) {
 		log.Panic("Snapshot DB corrupt or missing")
@@ -205,7 +199,6 @@ func ContinueBlockchainSnapshot(customPath string) *Blockchain {
 	return &chain
 }
 
-// GetBlock finds a block by hash and returns it
 func (chain *Blockchain) GetBlock(blockHash []byte) (Block, error) {
 	var block Block
 
@@ -245,7 +238,6 @@ func (chain *Blockchain) GetBlockHashes() [][]byte {
 	return blocks
 }
 
-// GetBestHeight returns the height of the latest block
 func (chain *Blockchain) GetBestHeight() int {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
@@ -275,7 +267,6 @@ func (chain *Blockchain) GetBestHeight() int {
 	return lastBlock.Height
 }
 
-// ForgeBlock forges a new block with PoA signing
 func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.PrivateKey) *Block {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
@@ -347,7 +338,6 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 	return newBlock
 }
 
-// AddBlock adds a received block to the blockchain after PoA validation
 func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transaction) bool {
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
 	_, err := chain.GetBlock(block.Hash)

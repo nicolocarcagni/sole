@@ -20,7 +20,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// ANSI Colors
 const (
 	ColorGreen  = "\033[32m"
 	ColorYellow = "\033[33m"
@@ -36,7 +35,6 @@ var rootCmd = &cobra.Command{
 	Long:  `Line command interface for SOLE Blockchain (Educational Project).`,
 }
 
-// Flags variables
 var (
 	addressFlag   string
 	fromFlag      string
@@ -148,7 +146,6 @@ func initConfig() {
 
 func init() {
 	cobra.OnInitialize(initConfig)
-	// --- WALLET COMMANDS ---
 	var walletCmd = &cobra.Command{
 		Use:   "wallet",
 		Short: "Manage wallets",

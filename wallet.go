@@ -20,13 +20,11 @@ const (
 	version = byte(0x00) // Hex for '0', similar to Bitcoin
 )
 
-// Wallet stores private and public keys
 type Wallet struct {
 	PrivateKey []byte // x509 Marshaled
 	PublicKey  []byte // Appended X and Y
 }
 
-// NewMnemonic generates a new 12-word BIP39 mnemonic
 func NewMnemonic() (string, error) {
 	entropy, err := bip39.NewEntropy(128)
 	if err != nil {
@@ -35,7 +33,6 @@ func NewMnemonic() (string, error) {
 	return bip39.NewMnemonic(entropy)
 }
 
-// MakeWalletFromMnemonic creates a Wallet deterministically from a 12-word mnemonic
 func MakeWalletFromMnemonic(mnemonic string) (*Wallet, error) {
 	mnemonic = strings.TrimSpace(mnemonic)
 	
@@ -66,7 +63,6 @@ func MakeWalletFromMnemonic(mnemonic string) (*Wallet, error) {
 	return &Wallet{encodedPrivate, pubKey}, nil
 }
 
-// NewWallet creates and returns a Wallet and its mnemonic
 func NewWallet() (*Wallet, string) {
 	mnemonic, err := NewMnemonic()
 	if err != nil {
@@ -81,7 +77,6 @@ func NewWallet() (*Wallet, string) {
 	return wallet, mnemonic
 }
 
-// MakeWalletFromPrivKeyHex creates a Wallet from a hex string private key
 func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
 	// 1. Decode Hex
 	privKeyBytes, err := hex.DecodeString(privKeyHex)
@@ -112,22 +107,19 @@ func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
 	return &wallet, nil
 }
 
-// GetAddress returns wallet address
 func (w Wallet) GetAddress() string {
 	pubKeyHash := HashPubKey(w.PublicKey)
 	return AddressFromPubKeyHash(pubKeyHash)
 }
 
-// GetPrivateKey returns the ECDSA Private Key
-func (w Wallet) GetPrivateKey() ecdsa.PrivateKey {
+func (w Wallet) GetPrivateKey() (ecdsa.PrivateKey, error) {
 	key, err := x509.ParseECPrivateKey(w.PrivateKey)
 	if err != nil {
-		log.Panic(err)
+		return ecdsa.PrivateKey{}, err
 	}
-	return *key
+	return *key, nil
 }
 
-// HashPubKey hashes public key
 func HashPubKey(pubKey []byte) []byte {
 	publicSHA256 := sha256.Sum256(pubKey)
 
@@ -143,7 +135,6 @@ func HashPubKey(pubKey []byte) []byte {
 
 
 
-// ValidateAddress validates if address is valid
 func ValidateAddress(address string) bool {
 	pubKeyHash, err := Base58Decode([]byte(address))
 	if err != nil {

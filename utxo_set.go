@@ -14,12 +14,10 @@ import (
 
 const utxoPrefix = "utxo-"
 
-// UTXOSet represents the UTXO set
 type UTXOSet struct {
 	Blockchain *Blockchain
 }
 
-// Reindex rebuilds the UTXO set
 func (u UTXOSet) Reindex() {
 	db := u.Blockchain.Database
 	bucketName := []byte(utxoPrefix)
@@ -54,8 +52,6 @@ func (u UTXOSet) Reindex() {
 	}
 }
 
-// Update updates the UTXO set with transactions from the Block
-// The Block must be considered "newly added" (tip).
 func (u UTXOSet) Update(block *Block) {
 	db := u.Blockchain.Database
 
@@ -97,8 +93,6 @@ func (u UTXOSet) Update(block *Block) {
 	}
 }
 
-// FindSpendableOutputs finds and returns unspent outputs to reference in inputs
-// Returns accumulated amount and a map of TxID -> []Vout (Output Index)
 func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
 	accumulated := int64(0)
@@ -142,8 +136,6 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 	return accumulated, unspentOutputs
 }
 
-// FindUnspentOutputs returns a list of outputs belonging to the address
-// Used for Balance calculation
 func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 	var UTXOs []TxOutput
 	db := u.Blockchain.Database
@@ -175,7 +167,6 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 	return UTXOs
 }
 
-// CountTransactions returns the number of UTXOs (not Transactions!)
 func (u UTXOSet) CountTransactions() int {
 	db := u.Blockchain.Database
 	counter := 0
@@ -219,9 +210,6 @@ func DeserializeUTXO(data []byte) TxOutput {
 	return out
 }
 
-// ValidateBlockTransactions verifies that all transactions in a block
-// only spend unspent outputs, including strict checks against double-spending
-// within the exact same block (mempool chaining).
 func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 	db := u.Blockchain.Database
 	valid := true
@@ -345,8 +333,6 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 	return valid
 }
 
-// CalculateFee calculates the implicit fee of a transaction: Sum(Inputs) - Sum(Outputs).
-// Optional params: mempool (for mempool chaining), blockTxCache (for intra-block/IBD resolution).
 func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem) (int64, error) {
 	if tx == nil {
 		return 0, fmt.Errorf("transaction is nil")

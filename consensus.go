@@ -19,7 +19,6 @@ var AuthorizedValidators = []string{
 	// Example: "deadbeef..."
 }
 
-// IsAuthorizedValidator checks if the given public key is in the authorized list
 func IsAuthorizedValidator(pubKeyHex string) bool {
 	for _, v := range AuthorizedValidators {
 		if v == pubKeyHex {
@@ -29,7 +28,6 @@ func IsAuthorizedValidator(pubKeyHex string) bool {
 	return false
 }
 
-// GetSignatureBytes returns (r, s) as 64 bytes with zero padding
 func GetSignatureBytes(r, s *big.Int) []byte {
 	rBytes := r.Bytes()
 	sBytes := s.Bytes()
@@ -41,7 +39,6 @@ func GetSignatureBytes(r, s *big.Int) []byte {
 	return sigBytes
 }
 
-// SignBlock signs the block hash with the validator's private key
 func SignBlock(block *Block, privKey ecdsa.PrivateKey) error {
 	// Ensure hash is set
 	if len(block.Hash) == 0 {
@@ -60,7 +57,6 @@ func SignBlock(block *Block, privKey ecdsa.PrivateKey) error {
 	return nil
 }
 
-// VerifyBlockSignature verifies that the block signature is valid
 func VerifyBlockSignature(block *Block) bool {
 	if len(block.Signature) != 64 {
 		fmt.Printf("PoA: Invalid signature length. Expected 64, Got %d\n", len(block.Signature))
@@ -108,7 +104,6 @@ func VerifyBlockSignature(block *Block) bool {
 	return true
 }
 
-// GetValidatorHex returns the hex-encoded public key for a wallet
 func GetValidatorHex(w Wallet) string {
 	return hex.EncodeToString(w.PublicKey)
 }
@@ -122,7 +117,6 @@ const (
 	TargetZeros = 1
 )
 
-// MineBlock performs the "Mining" (finding a valid Nonce)
 func MineBlock(block *Block) {
 	fmt.Printf("⛏️  Mining block %d... ", block.Height)
 	block.Nonce = 0
@@ -138,7 +132,6 @@ func MineBlock(block *Block) {
 	fmt.Printf("Done! Nonce: %d\n", block.Nonce)
 }
 
-// CheckProofOfWork checks if the hash satisfies the difficulty
 func CheckProofOfWork(hash []byte) bool {
 	// Simple check: First byte must be 0
 	if len(hash) < TargetZeros {
@@ -152,7 +145,6 @@ func CheckProofOfWork(hash []byte) bool {
 	return true
 }
 
-// ValidateBlockHeader checks strict PoA rules (Timestamp, Drift, Proof)
 func ValidateBlockHeader(block *Block, prevBlock *Block) error {
 	// 1. Monotonic Timestamp
 	if block.Timestamp <= prevBlock.Timestamp {

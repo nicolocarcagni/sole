@@ -11,7 +11,6 @@ const (
 	GenesisReward       = 5000000
 )
 
-// NewGenesisBlock creates and returns the genesis block
 func NewGenesisBlock() *Block {
 	// Deserialize address
 	pubKeyHash, err := ExtractPubKeyHash(GenesisAdminAddress)

@@ -8,7 +8,6 @@ import (
 
 const b58Alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
-// Base58Encode encodes a byte array to Base58
 func Base58Encode(input []byte) []byte {
 	var result []byte
 
@@ -36,7 +35,6 @@ func Base58Encode(input []byte) []byte {
 	return result
 }
 
-// Base58Decode decodes a Base58 encoded byte array
 func Base58Decode(input []byte) ([]byte, error) {
 	result := big.NewInt(0)
 	zeroBytes := 0
@@ -73,14 +71,12 @@ func Base58Decode(input []byte) ([]byte, error) {
 	return resultBytes, nil
 }
 
-// ReverseBytes reverses a byte array
 func ReverseBytes(data []byte) {
 	for i, j := 0, len(data)-1; i < j; i, j = i+1, j-1 {
 		data[i], data[j] = data[j], data[i]
 	}
 }
 
-// checksum calculates the checksum of the input
 func checksum(payload []byte) []byte {
 	firstSHA := sha256.Sum256(payload)
 	secondSHA := sha256.Sum256(firstSHA[:])

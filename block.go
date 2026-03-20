@@ -8,7 +8,6 @@ import (
 	"time"
 )
 
-// Block represents a block in the blockchain
 type Block struct {
 	Timestamp     int64
 	Transactions  []*Transaction
@@ -20,7 +19,6 @@ type Block struct {
 	Signature     []byte // ECDSA signature of the block hash (64 bytes)
 }
 
-// Serialize serializes the block into a byte slice
 func (b *Block) Serialize() []byte {
 	var result bytes.Buffer
 	encoder := gob.NewEncoder(&result)
@@ -69,7 +67,6 @@ func (b *Block) SetHash() {
 	b.Hash = hash[:]
 }
 
-// HashTransactions returns the Merkle Root of the block's transactions.
 func (b *Block) HashTransactions() []byte {
 	var txHashes [][]byte
 	for _, tx := range b.Transactions {
@@ -82,7 +79,6 @@ func (b *Block) HashTransactions() []byte {
 	return mTree.RootNode.Data
 }
 
-// NewBlock creates and returns a new Block
 func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int, validator []byte) *Block {
 	block := &Block{
 		Timestamp:     time.Now().Unix(),

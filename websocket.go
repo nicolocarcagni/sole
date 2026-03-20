@@ -94,8 +94,6 @@ func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// JSON payloads
-
 type WsInput struct {
 	Address string `json:"sender_address"`
 }
@@ -127,7 +125,6 @@ type WsBlockEvent struct {
 	Transactions []WsBlockTxSummary `json:"transactions"`
 }
 
-// BroadcastMempoolTx builds and sends a mempool event (non-blocking)
 func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 	if hub == nil {
 		return
@@ -179,7 +176,6 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 	}
 }
 
-// BroadcastBlock builds and sends a block event (non-blocking)
 func BroadcastBlock(hub *EventHub, block *Block) {
 	if hub == nil {
 		return

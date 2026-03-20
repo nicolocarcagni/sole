@@ -12,12 +12,10 @@ import (
 	"github.com/gorilla/mux"
 )
 
-// RestServer represents the HTTP API Server
 type RestServer struct {
 	P2P *Server
 }
 
-// StartRestServer starts the API server on the specified port
 func StartRestServer(server *Server, listenHost string, port int) {
 	rs := RestServer{P2P: server}
 
@@ -74,7 +72,6 @@ func commonMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Responses
 type BalanceResponse struct {
 	Address string `json:"address"`
 	Balance int64  `json:"balance"`
@@ -176,7 +173,6 @@ func (rs *RestServer) getMerkleProof(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-// JSON Response Structs
 type JSONTransactionResponse struct {
 	ID        string       `json:"id"`
 	Inputs    []JSONInput  `json:"inputs"`
@@ -206,9 +202,6 @@ type ValidatorResponse struct {
 	Validators      []string `json:"validators"`
 }
 
-// mapper methods moved to use shared helpers in utils.go
-
-// Mapper: ToJSONResponse
 func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 	var inputs []JSONInput
 	var outputs []JSONOutput
@@ -288,8 +281,6 @@ func ToJSONBlock(block *Block) JSONBlock {
 		Signature:     hex.EncodeToString(block.Signature),
 	}
 }
-
-// Handlers
 
 func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)

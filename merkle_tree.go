@@ -7,19 +7,16 @@ import (
 	"fmt"
 )
 
-// MerkleTree represents a Merkle tree
 type MerkleTree struct {
 	RootNode *MerkleNode
 }
 
-// MerkleNode represents a Merkle tree node
 type MerkleNode struct {
 	Left  *MerkleNode
 	Right *MerkleNode
 	Data  []byte
 }
 
-// NewMerkleTree creates a new Merkle tree from a sequence of data
 func NewMerkleTree(data [][]byte) *MerkleTree {
 	var nodes []MerkleNode
 
@@ -52,7 +49,6 @@ func NewMerkleTree(data [][]byte) *MerkleTree {
 	return &mTree
 }
 
-// NewMerkleNode creates a new Merkle tree node
 func NewMerkleNode(left, right *MerkleNode, data []byte) *MerkleNode {
 	mNode := MerkleNode{}
 
@@ -71,13 +67,11 @@ func NewMerkleNode(left, right *MerkleNode, data []byte) *MerkleNode {
 	return &mNode
 }
 
-// MerkleStep represents a node in the proof path
 type MerkleStep struct {
 	Hash      string `json:"hash"`
 	Direction string `json:"direction"` // "L" (Left) or "R" (Right)
 }
 
-// GetMerklePath extracts the Merkle Proof path for a target transaction ID
 func (m *MerkleTree) GetMerklePath(txID []byte) ([]MerkleStep, error) {
 	if m.RootNode == nil {
 		return nil, fmt.Errorf("merkle tree is empty")
@@ -93,7 +87,6 @@ func (m *MerkleTree) GetMerklePath(txID []byte) ([]MerkleStep, error) {
 	return path, nil
 }
 
-// findPath recursively traverses the tree to find the target leaf and builds the path
 func (n *MerkleNode) findPath(targetHash []byte) ([]MerkleStep, bool) {
 	// Base Case: Leaf Node
 	if n.Left == nil && n.Right == nil {

@@ -12,12 +12,10 @@ import (
 
 const walletFile = "wallet.dat"
 
-// Wallets stores a collection of wallets
 type Wallets struct {
 	Wallets map[string]*Wallet
 }
 
-// CreateWallets creates Wallets and fills it from a file if it exists
 func CreateWallets() (*Wallets, error) {
 	wallets := Wallets{}
 	wallets.Wallets = make(map[string]*Wallet)
@@ -27,7 +25,6 @@ func CreateWallets() (*Wallets, error) {
 	return &wallets, err
 }
 
-// AddWallet adds a Wallet to Wallets
 func (ws *Wallets) AddWallet() (string, string) {
 	wallet, mnemonic := NewWallet()
 	address := fmt.Sprintf("%s", wallet.GetAddress())
@@ -37,7 +34,6 @@ func (ws *Wallets) AddWallet() (string, string) {
 	return address, mnemonic
 }
 
-// RecoverWallet recovers a Wallet from a mnemonic phrase
 func (ws *Wallets) RecoverWallet(mnemonic string) (string, error) {
 	wallet, err := MakeWalletFromMnemonic(mnemonic)
 	if err != nil {
@@ -50,7 +46,6 @@ func (ws *Wallets) RecoverWallet(mnemonic string) (string, error) {
 	return address, nil
 }
 
-// ImportWallet adds a Wallet from a private key hex string
 func (ws *Wallets) ImportWallet(privKeyHex string) (string, error) {
 	wallet, err := MakeWalletFromPrivKeyHex(privKeyHex)
 	if err != nil {
@@ -63,7 +58,6 @@ func (ws *Wallets) ImportWallet(privKeyHex string) (string, error) {
 	return address, nil
 }
 
-// RemoveWallet removes a Wallet by address
 func (ws *Wallets) RemoveWallet(address string) error {
 	if _, ok := ws.Wallets[address]; !ok {
 		return fmt.Errorf("Address not found in wallet file")
@@ -73,17 +67,14 @@ func (ws *Wallets) RemoveWallet(address string) error {
 	return nil
 }
 
-// GetWallet returns a Wallet by its address
 func (ws *Wallets) GetWallet(address string) Wallet {
 	return *ws.Wallets[address]
 }
 
-// GetWalletRef returns a pointer to a Wallet, nil if not found
 func (ws *Wallets) GetWalletRef(address string) *Wallet {
 	return ws.Wallets[address]
 }
 
-// GetAddresses returns an array of addresses stored in the wallet file
 func (ws *Wallets) GetAddresses() []string {
 	var addresses []string
 
@@ -94,7 +85,6 @@ func (ws *Wallets) GetAddresses() []string {
 	return addresses
 }
 
-// LoadFromFile loads wallets from the file
 func (ws *Wallets) LoadFromFile() error {
 	if _, err := os.Stat(walletFile); os.IsNotExist(err) {
 		return err
@@ -118,7 +108,6 @@ func (ws *Wallets) LoadFromFile() error {
 	return nil
 }
 
-// SaveToFile saves wallets to a file
 func (ws *Wallets) SaveToFile() {
 	var content bytes.Buffer
 

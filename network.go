@@ -38,13 +38,11 @@ var (
 	}
 )
 
-// MempoolItem wraps a transaction with its arrival time for TTL eviction
 type MempoolItem struct {
 	Tx      Transaction
 	AddedAt int64
 }
 
-// Server represents the P2P server
 type Server struct {
 	Host             host.Host
 	Blockchain       *Blockchain
@@ -56,11 +54,9 @@ type Server struct {
 	Mempool          map[string]MempoolItem
 	MempoolMux       sync.Mutex
 
-	// WebSocket Event Hubs
 	MempoolHub *EventHub
 	BlockHub   *EventHub
 
-	// IBD (Initial Block Download) state
 	SyncingFrom    peer.ID        // Peer we are currently syncing from
 	IsSyncing      bool           // True while IBD is in progress
 	BlockBuffer    map[int]*Block // Height → Block buffer for ordered application
@@ -104,13 +100,11 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	}
 }
 
-// Helper to check substring
 func contains(s, substr string) bool {
 	// Simple string check using bytes package
 	return bytes.Contains([]byte(s), []byte(substr))
 }
 
-// ShortID returns the first 6 characters of a PeerID
 func ShortID(id string) string {
 	if len(id) > 12 {
 		return id[:6] + "..." + id[len(id)-6:]
@@ -118,7 +112,6 @@ func ShortID(id string) string {
 	return id
 }
 
-// ServerConfig holds P2P configuration
 type ServerConfig struct {
 	ListenHost string
 	Port       int
@@ -336,7 +329,7 @@ func (s *Server) ReadData(stream network.Stream, peerID peer.ID) {
 	}
 
 	payloadLen := binary.BigEndian.Uint32(lenBuf)
-	if payloadLen == 0 || payloadLen > 64*1024*1024 { // 64MB safety cap
+	if payloadLen == 0 || payloadLen > 8*1024*1024 { // 8MB safety cap
 		log.Printf("⚠️ Invalid payload length from %s: %d bytes. Dropping.", ShortID(peerID.String()), payloadLen)
 		return
 	}
@@ -402,8 +395,6 @@ type TxMsg struct {
 	AddrFrom    string
 	Transaction []byte
 }
-
-// Handlers
 
 func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 	var payload Version
