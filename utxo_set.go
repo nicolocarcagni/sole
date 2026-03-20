@@ -167,6 +167,53 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 	return UTXOs
 }
 
+type UTXO struct {
+	TxID   string
+	Vout   int
+	Output TxOutput
+}
+
+func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) []UTXO {
+	var UTXOs []UTXO
+	db := u.Blockchain.Database
+
+	err := db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(utxoPrefix)
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			k := string(item.Key())
+			v, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+
+			// Key format: utxo-<txID>-<outIdx>
+			parts := strings.Split(k, "-")
+			if len(parts) < 3 {
+				continue
+			}
+			txID := parts[1]
+			outIdx, _ := strconv.Atoi(parts[2])
+
+			out := DeserializeUTXO(v)
+
+			if out.IsLockedWithKey(pubKeyHash) {
+				UTXOs = append(UTXOs, UTXO{txID, outIdx, out})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return UTXOs
+}
+
 func (u UTXOSet) CountTransactions() int {
 	db := u.Blockchain.Database
 	counter := 0

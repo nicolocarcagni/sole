@@ -1,11 +1,14 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -14,8 +17,6 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/libp2p/go-libp2p"
-	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -533,19 +534,27 @@ func getBalance(cmd *cobra.Command, args []string) {
 		fmt.Println("⛔ ERROR: Invalid address provided.")
 		os.Exit(1)
 	}
-	chain := ContinueBlockchain(addressFlag)
-	UTXOSet := UTXOSet{chain}
-	defer chain.Database.Close()
 
-	balance := int64(0)
-	pubKeyHash, _ := ExtractPubKeyHash(addressFlag)
-	utxos := UTXOSet.FindUnspentOutputs(pubKeyHash)
-
-	for _, out := range utxos {
-		balance += out.Value
+	apiPort := viper.GetInt("api.port")
+	if apiPort == 0 {
+		apiPort = 8080
 	}
 
-	fmt.Printf("Balance of '%s': %d Photons (%.8f SOLE)\n", addressFlag, balance, float64(balance)/100000000.0)
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/balance/%s", apiPort, addressFlag))
+	if err != nil {
+		fmt.Printf("⛔ ERROR: Failed to connect to API: %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var balResp BalanceResponse
+	if err := json.NewDecoder(resp.Body).Decode(&balResp); err != nil {
+		fmt.Printf("⛔ ERROR: Failed to parse API response: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("Balance of '%s': %d Photons (%.8f SOLE)\n", 
+		balResp.Address, balResp.Balance, float64(balResp.Balance)/100000000.0)
 }
 
 func send(cmd *cobra.Command, args []string) {
@@ -562,110 +571,130 @@ func send(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Main logic handling
-	// Workaround for DB Lock: Create a snapshot copy of the DB
-	snapshotPath := dbPath + "_snapshot_" + strconv.FormatInt(time.Now().UnixNano(), 10)
-	err := CopyDir(dbPath, snapshotPath)
-	if err != nil {
-		log.Panic("Failed to create DB snapshot:", err)
-	}
-	defer os.RemoveAll(snapshotPath) // Cleanup
-
-	// Open snapshot
-	chain := ContinueBlockchainSnapshot(snapshotPath)
-	UTXOSet := UTXOSet{chain}
-	defer chain.Database.Close()
-
-	// Conversion: SOLE (Float) -> Photons (Int64)
 	amountInt := int64(amountFlag * 100000000)
 	feeInt := int64(feeFlag * 100000000)
+	totalRequired := amountInt + feeInt
+
 	fmt.Printf("💸 Sending: %.8f SOLE (%d Photons) | Fee: %.8f SOLE (%d Photons)\n", amountFlag, amountInt, feeFlag, feeInt)
 
-	tx := NewUTXOTransaction(fromFlag, toFlag, amountInt, feeInt, memoFlag, &UTXOSet)
+	wallets, err := CreateWallets()
+	if err != nil {
+		log.Panic(err)
+	}
+	wallet := wallets.GetWalletRef(fromFlag)
+	if wallet == nil {
+		fmt.Printf("⛔ ERRORE: Wallet non trovato per l'indirizzo mittente %s.\n", fromFlag)
+		os.Exit(1)
+	}
+
+	privKey, err := wallet.GetPrivateKey()
+	if err != nil {
+		fmt.Printf("⛔ ERROR: Failed to get private key for %s: %v\n", fromFlag, err)
+		os.Exit(1)
+	}
+
+	apiPort := viper.GetInt("api.port")
+	if apiPort == 0 {
+		apiPort = 8080
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://localhost:%d/utxos/%s", apiPort, fromFlag))
+	if err != nil {
+		fmt.Printf("⛔ ERROR: Failed to fetch UTXOs. Is the node running? %v\n", err)
+		os.Exit(1)
+	}
+	defer resp.Body.Close()
+
+	var utxos []UTXOResponse
+	if err := json.NewDecoder(resp.Body).Decode(&utxos); err != nil {
+		fmt.Printf("⛔ ERROR: Failed to parse API UTXO response: %v\n", err)
+		os.Exit(1)
+	}
+
+	var inputs []TxInput
+	accumulated := int64(0)
+	prevTXs := make(map[string]Transaction)
+
+	for _, utxo := range utxos {
+		accumulated += utxo.Amount
+		
+		txIDBytes, _ := hex.DecodeString(utxo.TxID)
+		inputs = append(inputs, TxInput{txIDBytes, utxo.Vout, nil, wallet.PublicKey})
+
+		if prevTXs[utxo.TxID].ID == nil {
+			rawResp, rawErr := http.Get(fmt.Sprintf("http://localhost:%d/rawtx/%s", apiPort, utxo.TxID))
+			if rawErr == nil {
+				var rawData RawTxResponse
+				json.NewDecoder(rawResp.Body).Decode(&rawData)
+				rawResp.Body.Close()
+
+				if rawData.Hex != "" {
+					txBytes, _ := hex.DecodeString(rawData.Hex)
+					prevTx := DeserializeTransaction(txBytes)
+					prevTXs[utxo.TxID] = prevTx
+				}
+			}
+		}
+
+		if accumulated >= totalRequired {
+			break
+		}
+	}
+
+	if accumulated < totalRequired {
+		fmt.Printf("⛔ ERRORE: Fondi insufficienti. Disponibili: %d, Richiesti: %d\n", accumulated, totalRequired)
+		os.Exit(1)
+	}
+
+	var outputs []TxOutput
+	if memoFlag != "" {
+		memo := memoFlag
+		if len(memo) > 80 {
+			memo = memo[:80]
+		}
+		outputs = append(outputs, TxOutput{0, []byte(memo)})
+	}
+	outputs = append(outputs, *NewTxOutput(amountInt, toFlag))
+	if accumulated > totalRequired {
+		outputs = append(outputs, *NewTxOutput(accumulated-totalRequired, fromFlag))
+	}
+
+	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
+	tx.ID = tx.Hash()
+	
+	tx.Sign(privKey, prevTXs)
 
 	if dryRunFlag {
 		fmt.Printf("Dry-Run: Transaction Hex:\n%x\n", tx.Serialize())
 		return
 	}
 
-	// P2P Injection Logic
-	fmt.Println("Searching for peers to broadcast transaction...")
-
-	// Panic Recovery
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Printf("⚠️  Recuperato da Panic in 'send': %v\n", r)
-		}
-	}()
-
-	// Create transient host
-	ctx := context.Background()
-	h, err := libp2p.New()
+	fmt.Println("Broadcasting transaction via API...")
+	
+	txSendReq := TxSendRequest{
+		Hex:  hex.EncodeToString(tx.Serialize()),
+		Fee:  float64(feeInt) / 100000000.0,
+		Memo: memoFlag,
+	}
+	
+	reqBody, _ := json.Marshal(txSendReq)
+	postResp, err := http.Post(fmt.Sprintf("http://localhost:%d/tx/send", apiPort), "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
-		log.Panic(err)
+		fmt.Printf("⛔ ERROR: Failed to broadcast tx: %v\n", err)
+		os.Exit(1)
 	}
-	defer h.Close()
+	defer postResp.Body.Close()
 
-	// Setup mDNS to find peers
-	// Note: We pass nil as server because we are just a transient client.
-	// HandlePeerFound checks for nil server now.
-	notifee := &discoveryNotifee{h: h, server: nil}
-	ser := mdns.NewMdnsService(h, discoveryNamespace, notifee)
-	if err := ser.Start(); err != nil {
-		log.Panic(err)
-	}
-
-	// Wait for connection and send
-	fmt.Println("Waiting for connection...")
-	found := false
-	timeout := time.After(10 * time.Second)
-	ticker := time.NewTicker(1 * time.Second)
-	defer ticker.Stop()
-
-	// Loop Event Detection
-	for {
-		select {
-		case <-timeout:
-			fmt.Println("⏰ Timeout: No peers found within 10 seconds. Is a node running?")
-			return
-		case <-ticker.C:
-			peers := h.Network().Peers()
-			if len(peers) > 0 {
-				targetPeer := peers[0]
-				// Avoid self? (Though CLI has different ID than Node usually, unless sharing key)
-
-				fmt.Printf("Sending transaction to %s\n", targetPeer.String())
-
-				// Serialize and Send
-				data := TxMsg{h.ID().String(), tx.Serialize()}
-				payload := GobEncode(data)
-				request := append(CommandToBytes("tx"), payload...)
-
-				stream, err := h.NewStream(ctx, targetPeer, protocolID)
-				if err != nil {
-					fmt.Printf("⚠️  Error opening stream: %s\n", err)
-					continue
-				}
-
-				_, err = stream.Write(request)
-				if err != nil {
-					fmt.Printf("⚠️  Error sending data: %s\n", err)
-					stream.Close()
-					continue
-				}
-				time.Sleep(500 * time.Millisecond) // Wait for write flush
-				stream.Close()
-
-				fmt.Println("✅ Transaction sent successfully!")
-				found = true
-				goto END_LOOP
-			}
-		}
-	}
-
-END_LOOP:
-	if !found {
-		fmt.Println("Error: No peers found to broadcast transaction.")
+	bodyBytes, _ := io.ReadAll(postResp.Body)
+	var apiResult SuccessResponse
+	json.Unmarshal(bodyBytes, &apiResult)
+	
+	if apiResult.Status == "success" {
+		fmt.Println("✅ Transaction sent successfully! ID:", apiResult.TxID)
+	} else {
+		var apiError ErrorResponse
+		json.Unmarshal(bodyBytes, &apiError)
+		fmt.Println("⛔ ERROR:", apiError.Error)
 	}
 }
 

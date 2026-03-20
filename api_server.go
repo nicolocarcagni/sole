@@ -35,6 +35,7 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	router.Handle("/utxos/{address}", readMW(http.HandlerFunc(rs.getUTXOs))).Methods("GET")
 	router.Handle("/blocks/tip", readMW(http.HandlerFunc(rs.getTip))).Methods("GET")
 	router.Handle("/blocks/{hash}", readMW(http.HandlerFunc(rs.getBlock))).Methods("GET")
+	router.Handle("/rawtx/{id}", readMW(http.HandlerFunc(rs.getRawTx))).Methods("GET")
 	router.Handle("/transactions/{address}", readMW(http.HandlerFunc(rs.getTransactions))).Methods("GET")
 	router.Handle("/transaction/{id}", readMW(http.HandlerFunc(rs.getTransaction))).Methods("GET")
 	router.Handle("/proof/{id}", readMW(http.HandlerFunc(rs.getMerkleProof))).Methods("GET")
@@ -103,6 +104,10 @@ type MerkleProofResponse struct {
 	BlockHeight int          `json:"block_height"`
 	MerkleRoot  string       `json:"merkle_root"`
 	Proof       []MerkleStep `json:"proof"`
+}
+
+type RawTxResponse struct {
+	Hex string `json:"hex"`
 }
 
 func (rs *RestServer) getMerkleProof(w http.ResponseWriter, r *http.Request) {
@@ -297,25 +302,40 @@ func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utxos := rs.P2P.Blockchain.FindUnspentTransactions(pubKeyHash)
+	utxos := rs.P2P.UTXOSet.FindUnspentOutputs(pubKeyHash)
 	balance := int64(0)
 
-	for _, tx := range utxos {
-		for _, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) {
-				balance += out.Value
-			}
-		}
+	for _, out := range utxos {
+		balance += out.Value
 	}
 
 	json.NewEncoder(w).Encode(BalanceResponse{Address: addr, Balance: balance})
 }
 
-// UTXOResponse represents a spendable output
 type UTXOResponse struct {
 	TxID   string `json:"txid"`
 	Vout   int    `json:"vout"`
 	Amount int64  `json:"amount"`
+}
+
+func (rs *RestServer) getRawTx(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	txIDHex := vars["id"]
+
+	txID, err := hex.DecodeString(txIDHex)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid transaction ID format"})
+		return
+	}
+
+	tx, err := rs.P2P.Blockchain.FindTransaction(txID)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction not found"})
+		return
+	}
+
+	json.NewEncoder(w).Encode(RawTxResponse{Hex: hex.EncodeToString(tx.Serialize())})
 }
 
 func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
@@ -344,26 +364,21 @@ func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
 	}
 	rs.P2P.MempoolMux.Unlock()
 
-	utxos := rs.P2P.Blockchain.FindUnspentTransactions(pubKeyHash)
+	utxos := rs.P2P.UTXOSet.FindAllUTXOs(pubKeyHash)
 	var response []UTXOResponse
 
-	for _, tx := range utxos {
-		txID := hex.EncodeToString(tx.ID)
-		for outIdx, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) {
-				// 2. Filter out Mempool-locked UTXOs
-				key := fmt.Sprintf("%s-%d", txID, outIdx)
-				if mempoolSpends[key] {
-					continue
-				}
-
-				response = append(response, UTXOResponse{
-					TxID:   txID,
-					Vout:   outIdx,
-					Amount: out.Value,
-				})
-			}
+	for _, u := range utxos {
+		// 2. Filter out Mempool-locked UTXOs
+		key := fmt.Sprintf("%s-%d", u.TxID, u.Vout)
+		if mempoolSpends[key] {
+			continue
 		}
+
+		response = append(response, UTXOResponse{
+			TxID:   u.TxID,
+			Vout:   u.Vout,
+			Amount: u.Output.Value,
+		})
 	}
 
 	if response == nil {
