@@ -42,6 +42,20 @@ Check how many SOLE you have available to spend.
     ./sole-cli wallet balance --address 1HSYNy8y...
     ```
 
+### `import`
+Import a private key to create a new wallet.
+*   **Example:**
+    ```bash
+    ./sole-cli wallet import --key <PRIVATE_KEY>
+    ```
+
+### `export`
+Export your private key
+*   **Example:**
+    ```bash
+    ./sole-cli wallet export --address <ADDRESS>
+    ```
+
 ---
 
 ## 2. Managing the Chain (`chain`)
@@ -65,8 +79,6 @@ Want to see the raw history? This prints every block in the ledger starting from
 ---
 
 ## 3. Running a Node (`node`)
-
-Ready to join the network? Use these commands to start the P2P engine.
 
 ### `start`
 This starts the P2P networking and the REST API server. If you’re an authorized validator, providing your address will start the block forging loop.
