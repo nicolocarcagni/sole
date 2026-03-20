@@ -7,6 +7,11 @@ The `sole-cli` is your command center. Use it to manage your wallets, move funds
 We’ve organized the commands into four main categories: `wallet`, `chain`, `node`, and `tx`. 
 Syntax: `./sole-cli <category> <command> [flags]`
 
+## Architecture: Light Client vs. Full Node
+Since v3.0.0, the CLI is smart about how it handles data.
+*   **Full Node**: Running `./sole-cli node start` turns your machine into a full participant in the network. It downloads the whole chain and handles P2P traffic.
+*   **Light Client**: Every other command (like `send` or `balance`) works as a "Light Client." You don't need a local copy of the blockchain. The CLI just talks to a running node via its REST API (default `localhost:8080`). This means you can manage your wallet without locking up your disk space.
+
 ---
 
 ## 1. Manage Your Wallets (`wallet`)
@@ -36,7 +41,7 @@ See all the addresses you’ve created or imported locally.
     ```
 
 ### `balance`
-Check how many SOLE you have available to spend.
+Check how many SOLE you have available to spend. The CLI fetches this data instantly from the Node's API.
 *   **Example:**
     ```bash
     ./sole-cli wallet balance --address 1HSYNy8y...
@@ -136,13 +141,16 @@ The node will automatically pick up `config.yaml` from the `WorkingDirectory`.
 Actually moving value on the network.
 
 ### `send`
-Create, sign, and broadcast a transaction.
+Create, sign, and broadcast a transaction. 
+
+**Note:** The CLI fetches your unspent outputs from the Node, signs the transaction locally with your private key, and pushes the signed hex back to the Node's mempool. Your private key never leaves your computer.
+
 *   **Required Flags:**
     *   `--from`: Your address (must be in your local wallet).
     *   `--to`: Who are you sending to?
     *   `--amount`: How many SOLE?
 *   **Optional Flags:**
-    *   `--memo`: Add a message (max 80 bytes). Great for "Coffee at faculty bar" or "Math notes".
+    *   `--memo`: Add a message (max 80 bytes).
 *   **Example:**
     ```bash
     ./sole-cli tx send --from 1HSYNy... --to 1SoLEr... --amount 15.0 --memo "Notes for Calculus I"

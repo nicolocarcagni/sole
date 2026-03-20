@@ -51,10 +51,10 @@ Retrieves total topological parameters and transaction arrays for a specific blo
 ---
 
 ### `GET /balance/{address}`
-Queries the UTXO set for the aggregate confirmed balance available to an address.
+Returns the total Photons available to an address. This is an instant O(1) indexed lookup.
 
 *   **Parameters**:
-    *   `address` (URL Path): Standard Base58 check-encoded SOLE address.
+    *   `address` (URL Path): Base58 check-encoded SOLE address.
 *   **Response**:
     ```json
     {
@@ -66,10 +66,12 @@ Queries the UTXO set for the aggregate confirmed balance available to an address
 ---
 
 ### `GET /utxos/{address}`
-Retrieves a flat list of unspent transaction outputs explicitly locked to the referenced address. Essential for external wallet SDKs attempting to construct off-grid transaction structures manually.
+Returns a list of unspent outputs for an address. 
+
+**Mempool Aware:** This endpoint automatically filters out any coins that are currently "pending" in the mempool. This prevents the caller from accidentally trying to double-spend the same coins before a transaction is mined.
 
 *   **Parameters**:
-    *   `address` (URL Path): Standard Base58 check-encoded SOLE address.
+    *   `address` (URL Path): Base58 check-encoded SOLE address.
 *   **Response**:
     ```json
     [
@@ -83,8 +85,22 @@ Retrieves a flat list of unspent transaction outputs explicitly locked to the re
 
 ---
 
+### `GET /rawtx/{id}`
+Returns the raw serialized hex of a transaction. The CLI uses this to verify parent transactions when signing locally.
+
+*   **Parameters**:
+    *   `id` (URL Path): 64-character hex-encoded transaction ID.
+*   **Response**:
+    ```json
+    {
+      "hex": "01000000018a..."
+    }
+    ```
+
+---
+
 ### `GET /transaction/{id}`
-Extracts full input, output array bindings, and value routes (both Photons and fractional SOLE implementations) for a specific transaction ID.
+Returns full details for a specific transaction.
 
 *   **Parameters**:
     *   `id` (URL Path): 64-character hex-encoded transaction ID.
