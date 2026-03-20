@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/dgraph-io/badger/v3"
 	"github.com/gorilla/mux"
 )
 
@@ -38,6 +39,7 @@ func StartRestServer(server *Server, listenHost string, port int) {
 	router.Handle("/blocks/{hash}", readMW(http.HandlerFunc(rs.getBlock))).Methods("GET")
 	router.Handle("/transactions/{address}", readMW(http.HandlerFunc(rs.getTransactions))).Methods("GET")
 	router.Handle("/transaction/{id}", readMW(http.HandlerFunc(rs.getTransaction))).Methods("GET")
+	router.Handle("/proof/{id}", readMW(http.HandlerFunc(rs.getMerkleProof))).Methods("GET")
 	router.Handle("/network/peers", readMW(http.HandlerFunc(rs.getPeers))).Methods("GET")
 	router.Handle("/consensus/validators", readMW(http.HandlerFunc(rs.getValidators))).Methods("GET")
 
@@ -96,6 +98,82 @@ type SuccessResponse struct {
 
 type ErrorResponse struct {
 	Error string `json:"error"`
+}
+
+type MerkleProofResponse struct {
+	TxID        string       `json:"txid"`
+	BlockHash   string       `json:"block_hash"`
+	BlockHeight int          `json:"block_height"`
+	MerkleRoot  string       `json:"merkle_root"`
+	Proof       []MerkleStep `json:"proof"`
+}
+
+func (rs *RestServer) getMerkleProof(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	txIDHex := vars["id"]
+
+	txID, err := hex.DecodeString(txIDHex)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid transaction ID format"})
+		return
+	}
+
+	// Verify the transaction exists
+	_, err = rs.P2P.Blockchain.FindTransaction(txID)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction not found"})
+		return
+	}
+
+	// Look up the block using the O(1) BadgerDB index
+	var blockHash []byte
+	err = rs.P2P.Blockchain.Database.View(func(txn *badger.Txn) error {
+		item, badgerErr := txn.Get(append([]byte("tx-"), txID...))
+		if badgerErr != nil {
+			return badgerErr
+		}
+		blockHash, badgerErr = item.ValueCopy(nil)
+		return badgerErr
+	})
+
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Block containing the transaction not found"})
+		return
+	}
+
+	block, err := rs.P2P.Blockchain.GetBlock(blockHash)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to retrieve block data"})
+		return
+	}
+
+	var txHashes [][]byte
+	for _, tx := range block.Transactions {
+		txHashes = append(txHashes, tx.ID)
+	}
+
+	mTree := NewMerkleTree(txHashes)
+	proof, err := mTree.GetMerklePath(txID)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: err.Error()})
+		return
+	}
+
+	response := MerkleProofResponse{
+		TxID:        txIDHex,
+		BlockHash:   hex.EncodeToString(block.Hash),
+		BlockHeight: block.Height,
+		MerkleRoot:  hex.EncodeToString(mTree.RootNode.Data),
+		Proof:       proof,
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
 }
 
 // JSON Response Structs
