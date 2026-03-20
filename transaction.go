@@ -16,7 +16,6 @@ import (
 	"time"
 )
 
-// TxOutput represents a transaction output
 type TxOutput struct {
 	Value      int64
 	PubKeyHash []byte
@@ -24,11 +23,10 @@ type TxOutput struct {
 
 // Lock signs the output
 func (out *TxOutput) Lock(address []byte) {
-	pubKeyHash, err := Base58Decode(address)
+	pubKeyHash, err := ExtractPubKeyHash(string(address))
 	if err != nil {
 		log.Panic(err)
 	}
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
 	out.PubKeyHash = pubKeyHash
 }
 
@@ -49,7 +47,6 @@ func NewTxOutput(value int64, address string) *TxOutput {
 	return txo
 }
 
-// TxOutputs collects TxOutput
 type TxOutputs struct {
 	Outputs []TxOutput
 }
@@ -76,7 +73,6 @@ func DeserializeOutputs(data []byte) TxOutputs {
 	return outputs
 }
 
-// TxInput represents a transaction input
 type TxInput struct {
 	Txid      []byte
 	Vout      int
@@ -90,7 +86,6 @@ func (in *TxInput) UsesKey(pubKeyHash []byte) bool {
 	return bytes.Equal(lockingHash, pubKeyHash)
 }
 
-// Transaction represents a Bitcoin-like transaction
 type Transaction struct {
 	ID        []byte
 	Vin       []TxInput

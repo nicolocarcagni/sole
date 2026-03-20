@@ -128,22 +128,7 @@ type ValidatorResponse struct {
 	Validators      []string `json:"validators"`
 }
 
-// Helper: Convert PubKey to Address
-func PubKeyToAddress(pubKey []byte) string {
-	pubKeyHash := HashPubKey(pubKey)
-	versionedPayload := append([]byte{version}, pubKeyHash...)
-	checksum := checksum(versionedPayload)
-	fullPayload := append(versionedPayload, checksum...)
-	return string(Base58Encode(fullPayload))
-}
-
-// Helper: Convert PubKeyHash to Address
-func PubKeyHashToAddress(pubKeyHash []byte) string {
-	versionedPayload := append([]byte{version}, pubKeyHash...)
-	checksum := checksum(versionedPayload)
-	fullPayload := append(versionedPayload, checksum...)
-	return string(Base58Encode(fullPayload))
-}
+// mapper methods moved to use shared helpers in utils.go
 
 // Mapper: ToJSONResponse
 func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
@@ -159,7 +144,7 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 	} else {
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, JSONInput{
-				SenderAddress: PubKeyToAddress(vin.PubKey),
+				SenderAddress: AddressFromPubKeyHash(HashPubKey(vin.PubKey)),
 				Signature:     hex.EncodeToString(vin.Signature),
 			})
 		}
@@ -171,7 +156,7 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 		if vout.IsOPReturn() {
 			receiverAddr = "OP_RETURN: " + string(vout.PubKeyHash)
 		} else {
-			receiverAddr = PubKeyHashToAddress(vout.PubKeyHash)
+			receiverAddr = AddressFromPubKeyHash(vout.PubKeyHash)
 		}
 
 		outputs = append(outputs, JSONOutput{
@@ -237,8 +222,11 @@ func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pubKeyHash, _ := Base58Decode([]byte(addr))
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
+	pubKeyHash, err := ExtractPubKeyHash(addr)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address encoding"})
+		return
+	}
 
 	utxos := rs.P2P.Blockchain.FindUnspentTransactions(pubKeyHash)
 	balance := int64(0)
@@ -270,8 +258,11 @@ func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pubKeyHash, _ := Base58Decode([]byte(addr))
-	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
+	pubKeyHash, err := ExtractPubKeyHash(addr)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address encoding"})
+		return
+	}
 
 	// 1. Identify Mempool Spends
 	mempoolSpends := make(map[string]bool)

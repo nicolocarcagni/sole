@@ -139,7 +139,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 	} else {
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, WsInput{
-				Address: PubKeyToAddress(vin.PubKey),
+				Address: AddressFromPubKeyHash(HashPubKey(vin.PubKey)),
 			})
 		}
 	}
@@ -154,7 +154,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 		}
 		if vout.Value > 0 {
 			outputs = append(outputs, WsOutput{
-				Address: PubKeyHashToAddress(vout.PubKeyHash),
+				Address: AddressFromPubKeyHash(vout.PubKeyHash),
 				Value:   vout.Value,
 			})
 		}
@@ -194,7 +194,7 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 		var inputs []WsInput
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, WsInput{
-				Address: PubKeyToAddress(vin.PubKey),
+				Address: AddressFromPubKeyHash(HashPubKey(vin.PubKey)),
 			})
 		}
 
@@ -205,7 +205,7 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 			}
 			if vout.Value > 0 {
 				outputs = append(outputs, WsOutput{
-					Address: PubKeyHashToAddress(vout.PubKeyHash),
+					Address: AddressFromPubKeyHash(vout.PubKeyHash),
 					Value:   vout.Value,
 				})
 			}
