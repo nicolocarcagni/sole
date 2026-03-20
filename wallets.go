@@ -28,13 +28,26 @@ func CreateWallets() (*Wallets, error) {
 }
 
 // AddWallet adds a Wallet to Wallets
-func (ws *Wallets) AddWallet() string {
-	wallet := NewWallet()
+func (ws *Wallets) AddWallet() (string, string) {
+	wallet, mnemonic := NewWallet()
 	address := fmt.Sprintf("%s", wallet.GetAddress())
 
 	ws.Wallets[address] = wallet
 
-	return address
+	return address, mnemonic
+}
+
+// RecoverWallet recovers a Wallet from a mnemonic phrase
+func (ws *Wallets) RecoverWallet(mnemonic string) (string, error) {
+	wallet, err := MakeWalletFromMnemonic(mnemonic)
+	if err != nil {
+		return "", err
+	}
+
+	address := fmt.Sprintf("%s", wallet.GetAddress())
+	ws.Wallets[address] = wallet
+
+	return address, nil
 }
 
 // ImportWallet adds a Wallet from a private key hex string

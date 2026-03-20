@@ -4,14 +4,16 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"log"
 	"math/big"
+	"strings"
 
 	"golang.org/x/crypto/ripemd160"
+	"github.com/tyler-smith/go-bip39"
 )
 
 const (
@@ -24,14 +26,59 @@ type Wallet struct {
 	PublicKey  []byte // Appended X and Y
 }
 
-// NewWallet creates and returns a Wallet
-func NewWallet() *Wallet {
-	private, public := newKeyPair()
+// NewMnemonic generates a new 12-word BIP39 mnemonic
+func NewMnemonic() (string, error) {
+	entropy, err := bip39.NewEntropy(128)
+	if err != nil {
+		return "", err
+	}
+	return bip39.NewMnemonic(entropy)
+}
 
-	encodedPrivate, _ := x509.MarshalECPrivateKey(&private)
+// MakeWalletFromMnemonic creates a Wallet deterministically from a 12-word mnemonic
+func MakeWalletFromMnemonic(mnemonic string) (*Wallet, error) {
+	mnemonic = strings.TrimSpace(mnemonic)
+	
+	if len(strings.Fields(mnemonic)) != 12 {
+		return nil, errors.New("invalid mnemonic: must be exactly 12 words")
+	}
 
-	wallet := Wallet{encodedPrivate, public}
-	return &wallet
+	if !bip39.IsMnemonicValid(mnemonic) {
+		return nil, errors.New("invalid mnemonic: checksum failed or words are not in the BIP39 dictionary")
+	}
+
+	seed := bip39.NewSeed(mnemonic, "")
+	privKeyBytes := sha256.Sum256(seed)
+
+	curve := elliptic.P256()
+	privKey := new(ecdsa.PrivateKey)
+	privKey.D = new(big.Int).SetBytes(privKeyBytes[:])
+	privKey.PublicKey.Curve = curve
+	privKey.PublicKey.X, privKey.PublicKey.Y = curve.ScalarBaseMult(privKeyBytes[:])
+
+	encodedPrivate, err := x509.MarshalECPrivateKey(privKey)
+	if err != nil {
+		return nil, err
+	}
+
+	pubKey := elliptic.Marshal(curve, privKey.PublicKey.X, privKey.PublicKey.Y)
+
+	return &Wallet{encodedPrivate, pubKey}, nil
+}
+
+// NewWallet creates and returns a Wallet and its mnemonic
+func NewWallet() (*Wallet, string) {
+	mnemonic, err := NewMnemonic()
+	if err != nil {
+		log.Panic(err)
+	}
+
+	wallet, err := MakeWalletFromMnemonic(mnemonic)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return wallet, mnemonic
 }
 
 // MakeWalletFromPrivKeyHex creates a Wallet from a hex string private key
@@ -66,15 +113,9 @@ func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
 }
 
 // GetAddress returns wallet address
-func (w Wallet) GetAddress() []byte {
+func (w Wallet) GetAddress() string {
 	pubKeyHash := HashPubKey(w.PublicKey)
-
-	versionedPayload := append([]byte{version}, pubKeyHash...)
-	checksum := checksum(versionedPayload)
-
-	fullPayload := append(versionedPayload, checksum...)
-	address := Base58Encode(fullPayload)
-	return address
+	return AddressFromPubKeyHash(pubKeyHash)
 }
 
 // GetPrivateKey returns the ECDSA Private Key
@@ -100,17 +141,7 @@ func HashPubKey(pubKey []byte) []byte {
 	return publicRIPEMD160
 }
 
-func newKeyPair() (ecdsa.PrivateKey, []byte) {
-	curve := elliptic.P256()
-	private, err := ecdsa.GenerateKey(curve, rand.Reader)
-	if err != nil {
-		log.Panic(err)
-	}
-	// Use elliptic.Marshal for consistency
-	pubKey := elliptic.Marshal(curve, private.PublicKey.X, private.PublicKey.Y)
 
-	return *private, pubKey
-}
 
 // ValidateAddress validates if address is valid
 func ValidateAddress(address string) bool {
