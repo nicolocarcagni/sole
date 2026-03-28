@@ -2,6 +2,7 @@
 ![Go Report](https://goreportcard.com/badge/github.com/nicolocarcagni/sole)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-success.svg)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/nicolocarcagni/sole)
 ---
 
 # SOLE Blockchain
