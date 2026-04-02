@@ -10,10 +10,17 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"os"
 	"time"
+)
+
+const (
+	MaxTxInputs  = 10000
+	MaxTxOutputs = 10000
+	MaxFieldLen  = 1 << 20 // 1MB per field
 )
 
 type TxOutput struct {
@@ -119,48 +126,94 @@ func DeserializeTransaction(data []byte) Transaction {
 	var tx Transaction
 	reader := bytes.NewReader(data)
 
+	// Helper for safe length reads
+	readLen := func() (int64, bool) {
+		var v int64
+		if err := binary.Read(reader, binary.BigEndian, &v); err != nil {
+			return 0, false
+		}
+		if v < 0 || v > MaxFieldLen {
+			return 0, false
+		}
+		return v, true
+	}
+
 	// Inputs
 	var inputsCount int64
-	binary.Read(reader, binary.BigEndian, &inputsCount)
+	if err := binary.Read(reader, binary.BigEndian, &inputsCount); err != nil {
+		return tx
+	}
+	if inputsCount < 0 || inputsCount > MaxTxInputs {
+		return tx
+	}
+
 	for i := 0; i < int(inputsCount); i++ {
 		var vin TxInput
-		var lenVal int64
 
 		// TxID
-		binary.Read(reader, binary.BigEndian, &lenVal)
-		vin.Txid = make([]byte, lenVal)
-		reader.Read(vin.Txid)
+		l, ok := readLen()
+		if !ok {
+			return tx
+		}
+		vin.Txid = make([]byte, l)
+		if _, err := io.ReadFull(reader, vin.Txid); err != nil {
+			return tx
+		}
 
 		// Vout
 		var vout int64
-		binary.Read(reader, binary.BigEndian, &vout)
+		if err := binary.Read(reader, binary.BigEndian, &vout); err != nil {
+			return tx
+		}
 		vin.Vout = int(vout)
 
 		// Signature
-		binary.Read(reader, binary.BigEndian, &lenVal)
-		vin.Signature = make([]byte, lenVal)
-		reader.Read(vin.Signature)
+		l, ok = readLen()
+		if !ok {
+			return tx
+		}
+		vin.Signature = make([]byte, l)
+		if _, err := io.ReadFull(reader, vin.Signature); err != nil {
+			return tx
+		}
 
 		// PubKey
-		binary.Read(reader, binary.BigEndian, &lenVal)
-		vin.PubKey = make([]byte, lenVal)
-		reader.Read(vin.PubKey)
+		l, ok = readLen()
+		if !ok {
+			return tx
+		}
+		vin.PubKey = make([]byte, l)
+		if _, err := io.ReadFull(reader, vin.PubKey); err != nil {
+			return tx
+		}
 
 		tx.Vin = append(tx.Vin, vin)
 	}
 
 	// Outputs
 	var outputsCount int64
-	binary.Read(reader, binary.BigEndian, &outputsCount)
+	if err := binary.Read(reader, binary.BigEndian, &outputsCount); err != nil {
+		return tx
+	}
+	if outputsCount < 0 || outputsCount > MaxTxOutputs {
+		return tx
+	}
+
 	for i := 0; i < int(outputsCount); i++ {
 		var vout TxOutput
-		var lenVal int64
 
-		binary.Read(reader, binary.BigEndian, &vout.Value)
+		if err := binary.Read(reader, binary.BigEndian, &vout.Value); err != nil {
+			return tx
+		}
 
-		binary.Read(reader, binary.BigEndian, &lenVal)
-		vout.PubKeyHash = make([]byte, lenVal)
-		reader.Read(vout.PubKeyHash)
+		l, ok := readLen()
+		if !ok {
+			return tx
+		}
+		vout.PubKeyHash = make([]byte, l)
+		if _, err := io.ReadFull(reader, vout.PubKeyHash); err != nil {
+			return tx
+		}
 
 		tx.Vout = append(tx.Vout, vout)
 	}
@@ -251,7 +304,8 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 
 	for _, vin := range tx.Vin {
 		if prevTXs[hex.EncodeToString(vin.Txid)].ID == nil {
-			log.Panic("ERROR: Previous transaction is not correct")
+			fmt.Printf("ERROR: Previous transaction is not correct\n")
+			return false
 		}
 	}
 

@@ -399,7 +399,10 @@ type TxMsg struct {
 func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 	var payload Version
 	dec := gob.NewDecoder(bytes.NewReader(request))
-	dec.Decode(&payload)
+	if err := dec.Decode(&payload); err != nil {
+		log.Printf("⚠️ HandleVersion: gob decode error from %s: %v", ShortID(peerID.String()), err)
+		return
+	}
 
 	// Duplicate Handshake Check
 	s.KnownPeersMux.RLock()
@@ -410,7 +413,7 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 	}
 
 	fmt.Printf("🤝 [Handshake] Connected to: %s (Remote) | Version: %d | BestHeight: %d\n", ShortID(peerID.String()), payload.Version, payload.BestHeight)
-	
+
 	s.KnownPeersMux.Lock()
 	s.KnownPeers[peerID.String()] = payload.AddrFrom
 	s.KnownPeersMux.Unlock()
@@ -436,7 +439,10 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 func (s *Server) HandleInv(request []byte, peerID peer.ID) {
 	var payload Inv
 	dec := gob.NewDecoder(bytes.NewReader(request))
-	dec.Decode(&payload)
+	if err := dec.Decode(&payload); err != nil {
+		log.Printf("⚠️ HandleInv: gob decode error from %s: %v", ShortID(peerID.String()), err)
+		return
+	}
 
 	if payload.Type == "block" {
 		var needed [][]byte
@@ -486,7 +492,13 @@ func (s *Server) HandleGetBlocks(request []byte, peerID peer.ID) {
 func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	var payload GetData
 	dec := gob.NewDecoder(bytes.NewReader(request))
-	dec.Decode(&payload)
+	if err := dec.Decode(&payload); err != nil {
+		log.Printf("⚠️ HandleGetData: gob decode error from %s: %v", ShortID(peerID.String()), err)
+		return
+	}
+	if len(payload.ID) == 0 {
+		return
+	}
 
 	if payload.Type == "block" {
 		fmt.Printf("📦 [P2P] Data Request (Block) | Hash: %x | Peer: %s\n", payload.ID[:4], ShortID(peerID.String()))
@@ -513,6 +525,11 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 }
 
 func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("⚡ Panic in HandleBlock: %v", r)
+		}
+	}()
 	var payload BlockMsg
 	dec := gob.NewDecoder(bytes.NewReader(request))
 	if err := dec.Decode(&payload); err != nil {
@@ -563,12 +580,12 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 		}
 
 		// Clean mempool
-		if len(s.Mempool) > 0 {
-			for _, tx := range block.Transactions {
-				txID := hex.EncodeToString(tx.ID)
-				delete(s.Mempool, txID)
-			}
+		s.MempoolMux.Lock()
+		for _, tx := range block.Transactions {
+			txID := hex.EncodeToString(tx.ID)
+			delete(s.Mempool, txID)
 		}
+		s.MempoolMux.Unlock()
 	}
 }
 

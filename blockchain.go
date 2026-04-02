@@ -436,9 +436,9 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 }
 
 const (
-	MaxSupply       = 8910000 * 100000000  // 8.91M * 10^8
-	InitialSubsidy  = 10 * 100000000       // 10 SOLE
-	HalvingInterval = 195500               // Blocks
+	MaxSupply       = 8910000 * 100000000 // 8.91M * 10^8
+	InitialSubsidy  = 10 * 100000000      // 10 SOLE
+	HalvingInterval = 195500              // Blocks
 )
 
 // GetBlockSubsidy calculates the mining reward based on block height (Halving)
@@ -552,7 +552,6 @@ func (bc *Blockchain) FindTransactions(address string) []Transaction {
 
 	return transactions
 }
-
 
 // FindUTXO finds all unspent transaction outputs and returns them
 func (chain *Blockchain) FindUTXO() map[string]TxOutputs {

@@ -186,7 +186,7 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 		if tx.IsCoinbase() {
 			continue
 		}
-		
+
 		var inputs []WsInput
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, WsInput{
@@ -231,5 +231,3 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 	default:
 	}
 }
-
-

@@ -472,7 +472,7 @@ func runRecoverWallet(cmd *cobra.Command, args []string) {
 	}
 
 	wallets, _ := CreateWallets()
-	
+
 	address, err := wallets.RecoverWallet(mnemonic)
 	if err != nil {
 		fmt.Println(ColorRed + "❌ Error: " + err.Error() + ColorReset)
@@ -494,13 +494,11 @@ func runRemoveWallet(cmd *cobra.Command, args []string) {
 		log.Panic(err)
 	}
 
-	// Check existence before prompt
 	if wallets.GetWalletRef(addressFlag) == nil {
 		fmt.Println("❌ Error: Address not found in wallet file.")
 		os.Exit(1)
 	}
 
-	// Confirmation Prompt
 	fmt.Printf("⚠️  Are you sure you want to remove wallet %s? [y/N]: ", addressFlag)
 	var response string
 	fmt.Scanln(&response)
@@ -545,7 +543,7 @@ func getBalance(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Balance of '%s': %d Photons (%.8f SOLE)\n", 
+	fmt.Printf("Balance of '%s': %d Photons (%.8f SOLE)\n",
 		balResp.Address, balResp.Balance, float64(balResp.Balance)/100000000.0)
 }
 
@@ -609,7 +607,7 @@ func send(cmd *cobra.Command, args []string) {
 
 	for _, utxo := range utxos {
 		accumulated += utxo.Amount
-		
+
 		txIDBytes, _ := hex.DecodeString(utxo.TxID)
 		inputs = append(inputs, TxInput{txIDBytes, utxo.Vout, nil, wallet.PublicKey})
 
@@ -653,7 +651,7 @@ func send(cmd *cobra.Command, args []string) {
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
 	tx.ID = tx.Hash()
-	
+
 	tx.Sign(privKey, prevTXs)
 
 	if dryRunFlag {
@@ -662,13 +660,13 @@ func send(cmd *cobra.Command, args []string) {
 	}
 
 	fmt.Println("Broadcasting transaction via API...")
-	
+
 	txSendReq := TxSendRequest{
 		Hex:  hex.EncodeToString(tx.Serialize()),
 		Fee:  float64(feeInt) / 100000000.0,
 		Memo: memoFlag,
 	}
-	
+
 	reqBody, _ := json.Marshal(txSendReq)
 	postResp, err := http.Post(fmt.Sprintf("http://localhost:%d/tx/send", apiPort), "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
@@ -680,7 +678,7 @@ func send(cmd *cobra.Command, args []string) {
 	bodyBytes, _ := io.ReadAll(postResp.Body)
 	var apiResult SuccessResponse
 	json.Unmarshal(bodyBytes, &apiResult)
-	
+
 	if apiResult.Status == "success" {
 		fmt.Println("✅ Transaction sent successfully! ID:", apiResult.TxID)
 	} else {
