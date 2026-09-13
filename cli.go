@@ -650,7 +650,6 @@ func send(cmd *cobra.Command, args []string) {
 	}
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
-	tx.ID = tx.Hash()
 
 	tx.Sign(privKey, prevTXs)
 

@@ -287,6 +287,13 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 		if err != nil {
 			log.Fatalf("Fatal: ECDSA signing failed: %v", err)
 		}
+
+		curveOrder := privKey.Curve.Params().N
+		halfOrder := new(big.Int).Rsh(curveOrder, 1)
+		if s.Cmp(halfOrder) > 0 {
+			s.Sub(curveOrder, s)
+		}
+
 		rBytes := make([]byte, 32)
 		sBytes := make([]byte, 32)
 		r.FillBytes(rBytes)
@@ -295,11 +302,18 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 
 		tx.Vin[inID].Signature = signature
 	}
+
+	tx.ID = tx.Hash()
 }
 
 func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 	if tx.IsCoinbase() {
 		return true
+	}
+
+	if len(tx.ID) > 0 && !bytes.Equal(tx.ID, tx.Hash()) {
+		fmt.Printf("⛔ ERROR: Transaction ID mismatch (got %x, expected %x)\n", tx.ID, tx.Hash())
+		return false
 	}
 
 	for _, vin := range tx.Vin {
@@ -344,6 +358,13 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		}
 		r.SetBytes(vin.Signature[:32])
 		s.SetBytes(vin.Signature[32:])
+
+		curveOrder := curve.Params().N
+		halfOrder := new(big.Int).Rsh(curveOrder, 1)
+		if s.Cmp(halfOrder) > 0 {
+			fmt.Printf("⛔ ERROR: Input %d: Non-canonical signature (high S malleability)\n", inID)
+			return false
+		}
 
 		x := big.Int{}
 		y := big.Int{}
@@ -451,7 +472,6 @@ func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, u
 	}
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
-	tx.ID = tx.Hash()
 	privKey, err := wallet.GetPrivateKey()
 	if err != nil {
 		fmt.Printf("⛔ ERROR: Failed to get private key for %s: %v\n", from, err)
