@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -40,9 +41,24 @@ func GetSignatureBytes(r, s *big.Int) []byte {
 }
 
 func SignBlock(block *Block, privKey ecdsa.PrivateKey) error {
-	// Ensure hash is set
-	if len(block.Hash) == 0 {
+	// Derive the 64-byte raw public key (X‖Y, 32 bytes each) from the private key.
+	keyX := privKey.PublicKey.X.FillBytes(make([]byte, 32))
+	keyY := privKey.PublicKey.Y.FillBytes(make([]byte, 32))
+	derivedPubKey := append(keyX, keyY...)
+
+	if len(block.Validator) == 0 {
+		// Validator not yet set: bind the public key into the header and recompute hash.
+		block.Validator = derivedPubKey
 		block.SetHash()
+	} else {
+		// Validator already set (e.g. by ForgeBlock): verify it matches the signing key.
+		if !bytes.Equal(block.Validator, derivedPubKey) {
+			return fmt.Errorf("SignBlock: key mismatch — block.Validator does not match privKey.PublicKey")
+		}
+		// Ensure the stored hash actually commits to the current header fields.
+		if len(block.Hash) == 0 || !bytes.Equal(block.Hash, block.CalculateHash()) {
+			block.SetHash()
+		}
 	}
 
 	r, s, err := ecdsa.Sign(rand.Reader, &privKey, block.Hash)
@@ -51,9 +67,6 @@ func SignBlock(block *Block, privKey ecdsa.PrivateKey) error {
 	}
 
 	block.Signature = GetSignatureBytes(r, s)
-	block.Validator = append(privKey.PublicKey.X.FillBytes(make([]byte, 32)),
-		privKey.PublicKey.Y.FillBytes(make([]byte, 32))...)
-
 	return nil
 }
 
@@ -146,6 +159,15 @@ func CheckProofOfWork(hash []byte) bool {
 }
 
 func ValidateBlockHeader(block *Block, prevBlock *Block) error {
+	// 0. Strict Hash Verification — the stored hash must equal the recomputed hash.
+	// This is the primary defence against header malleability: any tampered field
+	// (Validator, transactions, Nonce, Timestamp, Height, PrevBlockHash) will
+	// produce a different CalculateHash() value and be rejected here.
+	expectedHash := block.CalculateHash()
+	if !bytes.Equal(block.Hash, expectedHash) {
+		return fmt.Errorf("block hash mismatch: stored hash %x does not match calculated hash %x", block.Hash, expectedHash)
+	}
+
 	// 1. Monotonic Timestamp
 	if block.Timestamp <= prevBlock.Timestamp {
 		return fmt.Errorf("timestamp is not monotonic (Current: %d, Prev: %d)", block.Timestamp, prevBlock.Timestamp)
@@ -157,7 +179,7 @@ func ValidateBlockHeader(block *Block, prevBlock *Block) error {
 		return fmt.Errorf("timestamp too far in future (Block: %d, Now: %d, Limit: %d)", block.Timestamp, now, int64(DriftTolerance.Seconds()))
 	}
 
-	// 3. Anti-Spam (Proof of Work)
+	// 3. Anti-Spam (Proof of Work) — checked against the verified hash.
 	if !CheckProofOfWork(block.Hash) {
 		return fmt.Errorf("invalid PoA Proof-of-Work (Hash: %x)", block.Hash)
 	}

@@ -301,13 +301,21 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 	lastBlock := DeserializeBlock(lastBlockData)
 	newHeight := lastBlock.Height + 1
 
-	// Create block without signature first
-	newBlock := NewBlock(transactions, lastHash, newHeight, nil)
+	// Derive the validator's 64-byte raw public key (X‖Y, 32 bytes each) BEFORE
+	// constructing the block so that the Validator field is bound into the header
+	// prior to hashing and mining. This ensures block.Hash commits to the Validator.
+	valPubKey := append(privKey.PublicKey.X.FillBytes(make([]byte, 32)),
+		privKey.PublicKey.Y.FillBytes(make([]byte, 32))...)
 
-	// PoA Hardening: Mine the block (Find valid Nonce)
+	// Create block with Validator already set so the initial hash includes it.
+	newBlock := NewBlock(transactions, lastHash, newHeight, valPubKey)
+
+	// PoA Hardening: Mine the block (Find valid Nonce).
+	// The mining loop hashes the header which already contains the Validator.
 	MineBlock(newBlock)
 
-	// Sign the block with validator's private key
+	// Sign the block. SignBlock will verify Validator matches privKey and that
+	// block.Hash == block.CalculateHash() before signing.
 	err = SignBlock(newBlock, privKey)
 	if err != nil {
 		log.Panic("Failed to sign block:", err)
@@ -376,13 +384,22 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 		}
 	}
 
-	// 2. Verify PoA signature
+	// 2. Strict Hash Integrity — verify block.Hash equals the recomputed hash of the
+	// current header. This prevents header malleability attacks where a peer sends a
+	// block with tampered fields (Validator, transactions, etc.) and a fake Hash that
+	// happens to start with 0x00 (passing the raw PoW check).
+	if !bytes.Equal(block.Hash, block.CalculateHash()) {
+		fmt.Printf("⛔ AddBlock: Block rejected — hash integrity check failed for block at height %d\n", block.Height)
+		return false
+	}
+
+	// 3. Verify PoA signature
 	if !VerifyBlockSignature(block) {
 		fmt.Println("AddBlock: Block rejected - invalid PoA signature")
 		return false
 	}
 
-	// 3. Verify all internal transaction signatures (including intra-block + cross-block cache)
+	// 4. Verify all internal transaction signatures (including intra-block + cross-block cache)
 	if !chain.VerifyBlockTransactions(block, txCache...) {
 		fmt.Println("AddBlock: Block rejected - invalid transaction signatures")
 		return false

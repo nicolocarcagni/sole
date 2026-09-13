@@ -31,40 +31,34 @@ func (b *Block) Serialize() []byte {
 	return result.Bytes()
 }
 
-// SetHash calculates and sets the deterministic SHA-256 hash of the block header.
-// It explicitly excludes the Signature field to prevent malleability.
-func (b *Block) SetHash() {
-	var txHashes [][]byte
-	for _, tx := range b.Transactions {
-		txHashes = append(txHashes, tx.ID)
-	}
-
-	var merkleRoot []byte
-	if len(txHashes) > 0 {
-		mTree := NewMerkleTree(txHashes)
-		merkleRoot = mTree.RootNode.Data
-	} else {
-		merkleRoot = []byte{}
-	}
-
-	timestampBytes := IntToHex(b.Timestamp)
-	heightBytes := IntToHex(int64(b.Height))
-	nonceBytes := IntToHex(int64(b.Nonce))
+// CalculateHash computes the deterministic SHA-256 digest of the block header
+// without mutating any field. The preimage commits to every header field that
+// must be tamper-evident: PrevBlockHash, the Merkle root of all transaction
+// IDs, Timestamp, Height, Nonce, and the validator's public key.
+// The Signature field is intentionally excluded to prevent malleability.
+func (b *Block) CalculateHash() []byte {
+	merkleRoot := b.HashTransactions()
 
 	headers := bytes.Join(
 		[][]byte{
 			b.PrevBlockHash,
 			merkleRoot,
-			timestampBytes,
-			heightBytes,
-			nonceBytes,
+			IntToHex(b.Timestamp),
+			IntToHex(int64(b.Height)),
+			IntToHex(int64(b.Nonce)),
 			b.Validator,
 		},
 		[]byte{},
 	)
 
 	hash := sha256.Sum256(headers)
-	b.Hash = hash[:]
+	return hash[:]
+}
+
+// SetHash calculates and sets the deterministic SHA-256 hash of the block header.
+// It explicitly excludes the Signature field to prevent malleability.
+func (b *Block) SetHash() {
+	b.Hash = b.CalculateHash()
 }
 
 func (b *Block) HashTransactions() []byte {

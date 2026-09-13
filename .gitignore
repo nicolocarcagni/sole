@@ -1,4 +1,5 @@
 # Ignore compiled binaries
+sole
 sole-cli
 sole-cli.exe
 *.exe
