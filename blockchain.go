@@ -570,10 +570,15 @@ func (bc *Blockchain) FindTransactions(address string) []Transaction {
 	return transactions
 }
 
-// FindUTXO finds all unspent transaction outputs and returns them
-func (chain *Blockchain) FindUTXO() map[string]TxOutputs {
-	UTXO := make(map[string]TxOutputs)
-	spentTXOs := make(map[string][]int)
+// FindUTXO finds all unspent transaction outputs and returns them.
+// The returned map is keyed by hex-encoded transaction ID; the inner map is
+// keyed by the original Vout index from the transaction, preserving the true
+// output position so that downstream consumers (Reindex, FindSpendableOutputs)
+// write and read the correct utxo-<txID>-<vout> keys in BadgerDB.
+func (chain *Blockchain) FindUTXO() map[string]map[int]TxOutput {
+	UTXO := make(map[string]map[int]TxOutput)
+	// Use a nested map for O(1) spent-output lookup instead of O(n) slice scan.
+	spentTXOs := make(map[string]map[int]bool)
 	iter := chain.Iterator()
 
 	for {
@@ -582,26 +587,26 @@ func (chain *Blockchain) FindUTXO() map[string]TxOutputs {
 		for _, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
 
-		Outputs:
 			for outIdx, out := range tx.Vout {
-				// Was the output spent?
-				if spentTXOs[txID] != nil {
-					for _, spentOut := range spentTXOs[txID] {
-						if spentOut == outIdx {
-							continue Outputs
-						}
-					}
+				// Was the output spent? O(1) map lookup.
+				if spentTXOs[txID] != nil && spentTXOs[txID][outIdx] {
+					continue
 				}
 
-				outs := UTXO[txID]
-				outs.Outputs = append(outs.Outputs, out)
-				UTXO[txID] = outs
+				if UTXO[txID] == nil {
+					UTXO[txID] = make(map[int]TxOutput)
+				}
+				// Key is the ORIGINAL Vout index — never the compacted slice position.
+				UTXO[txID][outIdx] = out
 			}
 
 			if !tx.IsCoinbase() {
 				for _, in := range tx.Vin {
 					inTxID := hex.EncodeToString(in.Txid)
-					spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
+					if spentTXOs[inTxID] == nil {
+						spentTXOs[inTxID] = make(map[int]bool)
+					}
+					spentTXOs[inTxID][in.Vout] = true
 				}
 			}
 		}
@@ -614,21 +619,20 @@ func (chain *Blockchain) FindUTXO() map[string]TxOutputs {
 	return UTXO
 }
 
-// FindSpendableOutputs finds and returns unspent outputs to reference in inputs
+// FindSpendableOutputs finds and returns unspent outputs to reference in inputs.
+// It uses FindUTXO() directly to guarantee only true UTXOs are iterated and
+// that returned indices match the canonical Vout positions in the transaction.
 func (chain *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
 	accumulated := int64(0)
-	unspentTXs := chain.FindUnspentTransactions(pubKeyHash)
+	utxos := chain.FindUTXO()
 
 Work:
-	for _, tx := range unspentTXs {
-		txID := hex.EncodeToString(tx.ID)
-
-		for outIdx, out := range tx.Vout {
+	for txID, outs := range utxos {
+		for outIdx, out := range outs {
 			if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
 				accumulated += out.Value
 				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
-
 				if accumulated >= amount {
 					break Work
 				}

@@ -22,22 +22,23 @@ func (u UTXOSet) Reindex() {
 	db := u.Blockchain.Database
 	bucketName := []byte(utxoPrefix)
 
-	err := db.Update(func(txn *badger.Txn) error {
-		err := db.DropPrefix(bucketName)
-		return err
-	})
-	if err != nil {
+	// DropPrefix acquires its own internal write lock in Badger v3 and must
+	// NOT be called from within a db.Update transaction (deadlock).
+	if err := db.DropPrefix(bucketName); err != nil {
 		log.Fatalf("Fatal: Failed to clear UTXO set prefix: %v", err)
 	}
 
+	// FindUTXO now returns map[string]map[int]TxOutput where the inner key is
+	// the ORIGINAL Vout index from the transaction — not a compacted slice position.
 	UTXO := u.Blockchain.FindUTXO()
 
-	err = db.Update(func(txn *badger.Txn) error {
+	err := db.Update(func(txn *badger.Txn) error {
 		for txId, outs := range UTXO {
-			for outIdx, out := range outs.Outputs {
+			for outIdx, out := range outs {
 				if out.IsOPReturn() {
 					continue
 				}
+				// outIdx is the true Vout index, so this key is always correct.
 				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txId, outIdx)
 				err := txn.Set([]byte(key), SerializeUTXO(out))
 				if err != nil {
