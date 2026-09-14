@@ -43,7 +43,7 @@ func TestTxIDPostSigningAndSerializationConsistency(t *testing.T) {
 	inputs := []TxInput{
 		{Txid: prevTxID, Vout: 0, Signature: nil, PubKey: pubKey},
 	}
-	
+
 	// Destination keypair
 	_, destPubKey := generateTestKeyPair()
 	destPubKeyHash := HashPubKey(destPubKey)
@@ -100,7 +100,7 @@ func TestLowSCanonicalEnforcementAndMalleabilityAttack(t *testing.T) {
 	inputs := []TxInput{
 		{Txid: prevTxID, Vout: 0, Signature: nil, PubKey: pubKey},
 	}
-	
+
 	_, destPubKey := generateTestKeyPair()
 	destPubKeyHash := HashPubKey(destPubKey)
 
@@ -138,7 +138,7 @@ func TestLowSCanonicalEnforcementAndMalleabilityAttack(t *testing.T) {
 	sMalleatedBytes := make([]byte, 32)
 	r.FillBytes(rBytes)
 	sMalleated.FillBytes(sMalleatedBytes)
-	
+
 	malleatedSig := append(rBytes, sMalleatedBytes...)
 
 	// Replace the signature
@@ -160,7 +160,7 @@ func TestMerkleRootPreservation(t *testing.T) {
 
 	prevTxID1, _ := hex.DecodeString("0000000000000000000000000000000000000000000000000000000000000003")
 	prevTxID2, _ := hex.DecodeString("0000000000000000000000000000000000000000000000000000000000000004")
-	
+
 	prevTx1 := Transaction{ID: prevTxID1, Vout: []TxOutput{{Value: 100, PubKeyHash: pubKeyHash}}}
 	prevTx2 := Transaction{ID: prevTxID2, Vout: []TxOutput{{Value: 100, PubKeyHash: pubKeyHash}}}
 
@@ -173,15 +173,15 @@ func TestMerkleRootPreservation(t *testing.T) {
 	destPubKeyHash := HashPubKey(destPubKey)
 
 	tx1 := Transaction{
-		Vin:  []TxInput{{Txid: prevTxID1, Vout: 0, PubKey: pubKey}},
-		Vout: []TxOutput{{Value: 100, PubKeyHash: destPubKeyHash}},
+		Vin:       []TxInput{{Txid: prevTxID1, Vout: 0, PubKey: pubKey}},
+		Vout:      []TxOutput{{Value: 100, PubKeyHash: destPubKeyHash}},
 		Timestamp: time.Now().Unix(),
 	}
 	tx1.Sign(privKey, prevTXs)
 
 	tx2 := Transaction{
-		Vin:  []TxInput{{Txid: prevTxID2, Vout: 0, PubKey: pubKey}},
-		Vout: []TxOutput{{Value: 100, PubKeyHash: destPubKeyHash}},
+		Vin:       []TxInput{{Txid: prevTxID2, Vout: 0, PubKey: pubKey}},
+		Vout:      []TxOutput{{Value: 100, PubKeyHash: destPubKeyHash}},
 		Timestamp: time.Now().Unix(),
 	}
 	tx2.Sign(privKey, prevTXs)

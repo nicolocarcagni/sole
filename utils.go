@@ -26,7 +26,6 @@ func AddressFromPubKeyHash(pubKeyHash []byte) string {
 	return string(Base58Encode(fullPayload))
 }
 
-
 func IntToHex(num int64) []byte {
 	buff := new(bytes.Buffer)
 	err := binary.Write(buff, binary.BigEndian, num)

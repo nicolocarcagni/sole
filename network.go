@@ -29,6 +29,10 @@ import (
 const (
 	protocolID         = "/sole/3.0.0"
 	discoveryNamespace = "sole_p2p"
+	// MaxMempoolSize is the maximum number of unconfirmed transactions held in
+	// memory. Transactions are rejected once this ceiling is reached to prevent
+	// memory-exhaustion (DoS) attacks.
+	MaxMempoolSize = 5000
 )
 
 var (
@@ -659,25 +663,63 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	txData := payload.Transaction
 	tx := DeserializeTransaction(txData)
 
+	// ── 1. Structural & Sanity Validations ──────────────────────────────────
+	// Reject empty or malformed transactions.
+	if len(tx.Vin) == 0 || len(tx.Vout) == 0 {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX from %s: empty Vin or Vout\n", ShortID(peerID.String()))
+		return
+	}
+	// Reject coinbase transactions — they must never travel over P2P relay.
+	if tx.IsCoinbase() {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX from %s: coinbase transactions cannot be relayed\n", ShortID(peerID.String()))
+		return
+	}
+	// Verify transaction ID integrity to catch tampered or garbage payloads.
+	if len(tx.ID) == 0 || !bytes.Equal(tx.ID, tx.Hash()) {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX from %s: ID integrity check failed\n", ShortID(peerID.String()))
+		return
+	}
+
 	s.MempoolMux.Lock()
 	defer s.MempoolMux.Unlock()
 
 	txID := hex.EncodeToString(tx.ID)
+
+	// ── 2. Duplicate & In-Chain Checks ──────────────────────────────────────
 	if s.Mempool[txID].Tx.ID != nil {
+		return // Already in mempool
+	}
+	if _, err := s.Blockchain.FindTransaction(tx.ID); err == nil {
+		return // Already confirmed in blockchain — not relayed again
+	}
+
+	// ── 3. Mempool Capacity & DoS Protection ────────────────────────────────
+	if len(s.Mempool) >= MaxMempoolSize {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool full (%d/%d)\n", tx.ID, len(s.Mempool), MaxMempoolSize)
 		return
 	}
 
+	// ── 4. Cryptographic Signature Verification ─────────────────────────────
+	// This MUST happen before CalculateFee to avoid leaking timing information
+	// or processing further DB lookups on an unverified transaction.
+	if !s.Blockchain.VerifyTransactionWithMempool(&tx, s.Mempool) {
+		fmt.Printf("⛔ [HandleTx] Rejected TX %x: invalid or unverified signature from peer %s\n", tx.ID, peerID)
+		return
+	}
+
+	// ── 5. Input Validity & Fee Calculation ─────────────────────────────────
 	fee, err := s.UTXOSet.CalculateFee(&tx, s.Mempool)
 	if err != nil {
-		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: Cannot calculate fee: %s\n", tx.ID, err)
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: cannot calculate fee: %s\n", tx.ID, err)
 		return
 	}
 	if fee < 0 {
-		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: Negative fee (%d)\n", tx.ID, fee)
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: negative fee (%d)\n", tx.ID, fee)
 		return
 	}
 
-	// Check for mempool double-spend: reject if any input is already consumed
+	// ── 6. Mempool Double-Spend Check ────────────────────────────────────────
+	// Reject if any input outpoint is already consumed by a pending transaction.
 	for _, vin := range tx.Vin {
 		inputKey := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
 		for existingID, existing := range s.Mempool {
@@ -694,6 +736,7 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		}
 	}
 
+	// ── 7. Admit & Relay ─────────────────────────────────────────────────────
 	fmt.Printf("New Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
 	s.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
 	BroadcastMempoolTx(s.MempoolHub, &tx)
@@ -837,7 +880,14 @@ func (s *Server) AttemptMine() {
 	s.UTXOSet.Update(newBlock)
 	BroadcastBlock(s.BlockHub, newBlock)
 
-	s.Mempool = make(map[string]MempoolItem)
+	// Selectively evict only the transactions that were included in the new block.
+	// Legitimate unconfirmed transactions that were not included (e.g. arrived
+	// during mining or deferred due to block-size limits) are preserved.
+	for _, tx := range newBlock.Transactions {
+		if !tx.IsCoinbase() {
+			delete(s.Mempool, hex.EncodeToString(tx.ID))
+		}
+	}
 
 	fmt.Printf("New block forged: %x (Reward: %d | Sub: %d + Fee: %d)\n", newBlock.Hash, totalReward, subsidy, totalFees)
 

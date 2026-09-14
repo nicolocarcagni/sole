@@ -12,8 +12,8 @@ import (
 	"math/big"
 	"strings"
 
-	"golang.org/x/crypto/ripemd160"
 	"github.com/tyler-smith/go-bip39"
+	"golang.org/x/crypto/ripemd160"
 )
 
 const (
@@ -35,7 +35,7 @@ func NewMnemonic() (string, error) {
 
 func MakeWalletFromMnemonic(mnemonic string) (*Wallet, error) {
 	mnemonic = strings.TrimSpace(mnemonic)
-	
+
 	if len(strings.Fields(mnemonic)) != 12 {
 		return nil, errors.New("invalid mnemonic: must be exactly 12 words")
 	}
@@ -132,8 +132,6 @@ func HashPubKey(pubKey []byte) []byte {
 
 	return publicRIPEMD160
 }
-
-
 
 func ValidateAddress(address string) bool {
 	pubKeyHash, err := Base58Decode([]byte(address))

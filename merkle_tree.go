@@ -78,7 +78,7 @@ func (m *MerkleTree) GetMerklePath(txID []byte) ([]MerkleStep, error) {
 	}
 
 	targetHashBytes := sha256.Sum256(txID)
-	
+
 	path, found := m.RootNode.findPath(targetHashBytes[:])
 	if !found {
 		return nil, fmt.Errorf("transaction not found in merkle tree")

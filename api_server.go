@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -495,7 +496,30 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	// Deserialize
 	tx := DeserializeTransaction(txBytes)
 
-	// Validate with mempool context for chained transactions
+	// ── 1. Structural & Sanity Validations ──────────────────────────────────
+	if len(tx.Vin) == 0 || len(tx.Vout) == 0 {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction has no inputs or outputs"})
+		return
+	}
+	if tx.IsCoinbase() {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Coinbase transactions cannot be submitted via API"})
+		return
+	}
+	if len(tx.ID) == 0 || !bytes.Equal(tx.ID, tx.Hash()) {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction ID integrity check failed"})
+		return
+	}
+
+	// ── 2. Mempool Capacity ──────────────────────────────────────────────────
+	rs.P2P.MempoolMux.Lock()
+	mempoolLen := len(rs.P2P.Mempool)
+	rs.P2P.MempoolMux.Unlock()
+	if mempoolLen >= MaxMempoolSize {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Mempool is full, try again later"})
+		return
+	}
+
+	// ── 3. Snapshot mempool for chained-transaction validation ──────────────
 	rs.P2P.MempoolMux.Lock()
 	mempoolSnapshot := make(map[string]MempoolItem, len(rs.P2P.Mempool))
 	for k, v := range rs.P2P.Mempool {
@@ -503,6 +527,19 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	}
 	rs.P2P.MempoolMux.Unlock()
 
+	// ── 4. Input Validity & Fee Calculation ─────────────────────────────────
+	// Uses the strict CalculateFee which rejects historically-spent outputs.
+	fee, err := rs.P2P.UTXOSet.CalculateFee(&tx, mempoolSnapshot)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid inputs: " + err.Error()})
+		return
+	}
+	if fee < 0 {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: fmt.Sprintf("Negative fee (%d)", fee)})
+		return
+	}
+
+	// ── 5. Cryptographic Signature Verification ──────────────────────────────
 	if rs.P2P.Blockchain.VerifyTransactionWithMempool(&tx, mempoolSnapshot) == false {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction invalid"})
 		return
@@ -510,7 +547,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 
 	txID := hex.EncodeToString(tx.ID)
 
-	// Add to Mempool
+	// ── 6. Add to Mempool (with double-spend check) ──────────────────────────
 	rs.P2P.MempoolMux.Lock()
 	defer rs.P2P.MempoolMux.Unlock()
 
@@ -532,7 +569,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 		}
 
 		rs.P2P.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
-		fmt.Printf("API: Transaction added to Mempool: %s\n", txID)
+		fmt.Printf("API: Transaction added to Mempool: %s (Fee: %d)\n", txID, fee)
 		BroadcastMempoolTx(rs.P2P.MempoolHub, &tx)
 
 		// Broadcast Inv

@@ -418,15 +418,10 @@ func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem
 						}
 					}
 				}
-				// Fallback to blockchain DB search
-				prevTx, err := u.Blockchain.FindTransaction(vin.Txid)
-				if err != nil {
-					return fmt.Errorf("input tx %s not found in DB or Mempool", txID)
-				}
-				if int(vin.Vout) < len(prevTx.Vout) {
-					inputTotal += prevTx.Vout[vin.Vout].Value
-				}
-				continue
+				// Input is not in the UTXO set and not in the mempool.
+				// The output either never existed or was already spent in a prior block.
+				// Reject immediately to prevent the historical double-spend fee bypass.
+				return fmt.Errorf("input outpoint %s:%d does not exist or has already been spent", txID, vin.Vout)
 			} else if err != nil {
 				return err
 			}
@@ -446,5 +441,8 @@ func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem
 	}
 
 	fee := inputTotal - outputTotal
+	if fee < 0 {
+		return 0, fmt.Errorf("negative fee (%d)", fee)
+	}
 	return fee, nil
 }
