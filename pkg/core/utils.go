@@ -1,6 +1,8 @@
-package main
+package core
 
 import (
+	"crypto/sha256"
+	"golang.org/x/crypto/ripemd160"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -20,8 +22,8 @@ func ExtractPubKeyHash(address string) ([]byte, error) {
 
 func AddressFromPubKeyHash(pubKeyHash []byte) string {
 	versionedPayload := append([]byte{version}, pubKeyHash...)
-	checksum := checksum(versionedPayload)
-	fullPayload := append(versionedPayload, checksum...)
+	chksum := Checksum(versionedPayload)
+	fullPayload := append(versionedPayload, chksum...)
 	return string(Base58Encode(fullPayload))
 }
 
@@ -69,3 +71,14 @@ func CopyDir(src string, dst string) error {
 	}
 	return nil
 }
+
+func HashPubKey(pubKey []byte) []byte {
+	publicSHA256 := sha256.Sum256(pubKey)
+
+	RIPEMD160Hasher := ripemd160.New()
+	_, _ = RIPEMD160Hasher.Write(publicSHA256[:])
+	publicRIPEMD160 := RIPEMD160Hasher.Sum(nil)
+
+	return publicRIPEMD160
+}
+const version = byte(0x00)

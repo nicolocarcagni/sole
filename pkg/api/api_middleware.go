@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"bytes"
@@ -11,7 +11,8 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
-)
+
+	)
 
 type IPRateLimiter struct {
 	ips map[string]*rate.Limiter
@@ -101,7 +102,7 @@ func CORSMiddleware(next http.Handler) http.Handler {
 		defer func() {
 			if err := recover(); err != nil {
 				log.Printf("⚠️  [REST API] Recovered from panic in handler: %v", err)
-				http.Error(w, "500 Internal Server Error", http.StatusInternalServerError)
+				http.Error(w, "500 Internal p2p.Server Error", http.StatusInternalServerError)
 			}
 		}()
 

@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"bytes"
@@ -422,77 +422,8 @@ func NewCoinbaseTX(to, data string, amount int64) (*Transaction, error) {
 	return &tx, nil
 }
 
-func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet) (*Transaction, error) {
-	var inputs []TxInput
-	var outputs []TxOutput
 
-	wallets, err := CreateWallets()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create wallets: %w", err)
-	}
-	wallet := wallets.GetWalletRef(from)
-	if wallet == nil {
-		return nil, fmt.Errorf("invalid sender address %q: wallet not found", from)
-	}
-	pubKeyHash := HashPubKey(wallet.PublicKey)
-
-	// We need enough to cover both the amount and the fee
-	totalRequired := amount + fee
-
-	acc, validOutputs, err := utxoSet.FindSpendableOutputs(pubKeyHash, totalRequired)
-	if err != nil {
-		return nil, fmt.Errorf("failed to find spendable outputs: %w", err)
-	}
-
-	if acc < totalRequired {
-		return nil, fmt.Errorf("insufficient funds: available %d, required %d", acc, totalRequired)
-	}
-
-	for txid, outs := range validOutputs {
-		txID, err := hex.DecodeString(txid)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode txid %s: %w", txid, err)
-		}
-
-		for _, out := range outs {
-			input := TxInput{txID, out, nil, wallet.PublicKey}
-			inputs = append(inputs, input)
-		}
-	}
-
-	// Add OP_RETURN memo if provided
-	if memo != "" {
-		if len(memo) > 80 {
-			memo = memo[:80] // Truncate to standard OP_RETURN 80 byte limit
-		}
-		outputs = append(outputs, TxOutput{0, []byte(memo)})
-	}
-
-	// The primary destination output
-	outDest, err := NewTxOutput(amount, to)
-	if err != nil {
-		return nil, fmt.Errorf("invalid destination address %q: %w", to, err)
-	}
-	outputs = append(outputs, *outDest)
-
-	// The change output (returned to sender)
-	if acc > totalRequired {
-		outChange, err := NewTxOutput(acc-totalRequired, from)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create change output: %w", err)
-		}
-		outputs = append(outputs, *outChange)
-	}
-
-	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
-	privKey, err := wallet.GetPrivateKey()
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve private key for %s: %w", from, err)
-	}
-	err = utxoSet.Blockchain.SignTransaction(&tx, privKey)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign transaction: %w", err)
-	}
-
-	return &tx, nil
+type MempoolItem struct {
+	Tx      Transaction
+	AddedAt int64
 }

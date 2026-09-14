@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"crypto/sha256"
@@ -77,7 +77,7 @@ func ReverseBytes(data []byte) {
 	}
 }
 
-func checksum(payload []byte) []byte {
+func Checksum(payload []byte) []byte {
 	firstSHA := sha256.Sum256(payload)
 	secondSHA := sha256.Sum256(firstSHA[:])
 	return secondSHA[:4]

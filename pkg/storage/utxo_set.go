@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"bytes"
@@ -9,9 +9,11 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v3"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
-const utxoPrefix = "utxo-"
+const UtxoPrefix = "utxo-"
 
 type UTXOSet struct {
 	Blockchain *Blockchain
@@ -19,13 +21,13 @@ type UTXOSet struct {
 
 func (u UTXOSet) Reindex() error {
 	db := u.Blockchain.Database
-	bucketName := []byte(utxoPrefix)
+	bucketName := []byte(UtxoPrefix)
 
 	if err := db.DropPrefix(bucketName); err != nil {
 		return fmt.Errorf("failed to clear UTXO set prefix: %w", err)
 	}
 
-	// FindUTXO now returns map[string]map[int]TxOutput where the inner key is
+	// FindUTXO now returns map[string]map[int]core.TxOutput where the inner key is
 	// the ORIGINAL Vout index from the transaction — not a compacted slice position.
 	UTXO := u.Blockchain.FindUTXO()
 
@@ -36,7 +38,7 @@ func (u UTXOSet) Reindex() error {
 					continue
 				}
 				// outIdx is the true Vout index, so this key is always correct.
-				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txId, outIdx)
+				key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txId, outIdx)
 				serializedOut, err := SerializeUTXO(out)
 				if err != nil {
 					return err
@@ -55,7 +57,7 @@ func (u UTXOSet) Reindex() error {
 	return nil
 }
 
-func (u UTXOSet) Update(block *Block) error {
+func (u UTXOSet) Update(block *core.Block) error {
 	db := u.Blockchain.Database
 
 	err := db.Update(func(txn *badger.Txn) error {
@@ -63,7 +65,7 @@ func (u UTXOSet) Update(block *Block) error {
 			if !tx.IsCoinbase() {
 				for _, vin := range tx.Vin {
 					txID := hex.EncodeToString(vin.Txid)
-					key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
+					key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, vin.Vout)
 
 					// Delete spent output
 					err := txn.Delete([]byte(key))
@@ -81,7 +83,7 @@ func (u UTXOSet) Update(block *Block) error {
 					continue
 				}
 				txID := hex.EncodeToString(tx.ID)
-				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
+				key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, outIdx)
 
 				serializedOut, err := SerializeUTXO(out)
 				if err != nil {
@@ -108,7 +110,7 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(utxoPrefix)
+		opts.Prefix = []byte(UtxoPrefix)
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -147,13 +149,13 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 	return accumulated, unspentOutputs, nil
 }
 
-func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) ([]TxOutput, error) {
-	var UTXOs []TxOutput
+func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) ([]core.TxOutput, error) {
+	var UTXOs []core.TxOutput
 	db := u.Blockchain.Database
 
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(utxoPrefix)
+		opts.Prefix = []byte(UtxoPrefix)
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -184,7 +186,7 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) ([]TxOutput, error) {
 type UTXO struct {
 	TxID   string
 	Vout   int
-	Output TxOutput
+	Output core.TxOutput
 }
 
 func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) ([]UTXO, error) {
@@ -193,7 +195,7 @@ func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) ([]UTXO, error) {
 
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(utxoPrefix)
+		opts.Prefix = []byte(UtxoPrefix)
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -237,7 +239,7 @@ func (u UTXOSet) CountTransactions() (int, error) {
 
 	err := db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(utxoPrefix)
+		opts.Prefix = []byte(UtxoPrefix)
 		it := txn.NewIterator(opts)
 		defer it.Close()
 
@@ -253,8 +255,8 @@ func (u UTXOSet) CountTransactions() (int, error) {
 	return counter, nil
 }
 
-// Helper functions for serialization since we are storing individual TxOutputs
-func SerializeUTXO(out TxOutput) ([]byte, error) {
+// Helper functions for serialization since we are storing individual core.TxOutputs
+func SerializeUTXO(out core.TxOutput) ([]byte, error) {
 	var buff bytes.Buffer
 	enc := gob.NewEncoder(&buff)
 	err := enc.Encode(out)
@@ -264,8 +266,8 @@ func SerializeUTXO(out TxOutput) ([]byte, error) {
 	return buff.Bytes(), nil
 }
 
-func DeserializeUTXO(data []byte) (TxOutput, error) {
-	var out TxOutput
+func DeserializeUTXO(data []byte) (core.TxOutput, error) {
+	var out core.TxOutput
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	err := dec.Decode(&out)
 	if err != nil {
@@ -274,7 +276,7 @@ func DeserializeUTXO(data []byte) (TxOutput, error) {
 	return out, nil
 }
 
-func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
+func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 	db := u.Blockchain.Database
 	valid := true
 
@@ -287,7 +289,7 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 	totalFees := int64(0)
 
 	// ── Pass 1: Pre-populate block TX map and created outputs ────────────
-	blockTxMap := make(map[string]*Transaction)
+	blockTxMap := make(map[string]*core.Transaction)
 	for _, tx := range block.Transactions {
 		if tx == nil {
 			fmt.Println("⚠️ [ValidateBlockTransactions] Nil transaction found in block, rejecting...")
@@ -299,7 +301,7 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 			if out.IsOPReturn() {
 				continue
 			}
-			key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
+			key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, outIdx)
 			createdInBlock[key] = true
 		}
 	}
@@ -320,7 +322,7 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 
 			for _, vin := range tx.Vin {
 				txID := hex.EncodeToString(vin.Txid)
-				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
+				key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, vin.Vout)
 
 				// 1. Check if already spent by another transaction in THIS block
 				if spentInBlock[key] {
@@ -375,7 +377,7 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 			totalFees += fee
 		}
 
-		// Validate Coinbase Block Reward + Fees Limit
+		// Validate Coinbase core.Block Reward + Fees Limit
 		if len(block.Transactions) > 0 && block.Transactions[0].IsCoinbase() {
 			cbTx := block.Transactions[0]
 			coinbaseValue := cbTx.Vout[0].Value
@@ -400,7 +402,7 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 	return valid
 }
 
-func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem) (int64, error) {
+func (u UTXOSet) CalculateFee(tx *core.Transaction, mempool ...map[string]core.MempoolItem) (int64, error) {
 	if tx == nil {
 		return 0, fmt.Errorf("transaction is nil")
 	}
@@ -408,7 +410,7 @@ func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem
 		return 0, nil
 	}
 
-	var mp map[string]MempoolItem
+	var mp map[string]core.MempoolItem
 	if len(mempool) > 0 && mempool[0] != nil {
 		mp = mempool[0]
 	}
@@ -424,7 +426,7 @@ func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem
 	err := db.View(func(txn *badger.Txn) error {
 		for _, vin := range tx.Vin {
 			txID := hex.EncodeToString(vin.Txid)
-			key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, vin.Vout)
+			key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, vin.Vout)
 
 			item, err := txn.Get([]byte(key))
 			if err == badger.ErrKeyNotFound {

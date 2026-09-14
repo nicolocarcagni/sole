@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"encoding/hex"
@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
 var upgrader = websocket.Upgrader{
@@ -125,7 +127,7 @@ type WsBlockEvent struct {
 	Transactions []WsBlockTxSummary `json:"transactions"`
 }
 
-func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
+func BroadcastMempoolTx(hub *EventHub, tx *core.Transaction) {
 	if hub == nil {
 		return
 	}
@@ -136,7 +138,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 	} else {
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, WsInput{
-				Address: AddressFromPubKeyHash(HashPubKey(vin.PubKey)),
+				Address: core.AddressFromPubKeyHash(core.HashPubKey(vin.PubKey)),
 			})
 		}
 	}
@@ -151,7 +153,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 		}
 		if vout.Value > 0 {
 			outputs = append(outputs, WsOutput{
-				Address: AddressFromPubKeyHash(vout.PubKeyHash),
+				Address: core.AddressFromPubKeyHash(vout.PubKeyHash),
 				Value:   vout.Value,
 			})
 		}
@@ -176,7 +178,7 @@ func BroadcastMempoolTx(hub *EventHub, tx *Transaction) {
 	}
 }
 
-func BroadcastBlock(hub *EventHub, block *Block) {
+func BroadcastBlock(hub *EventHub, block *core.Block) {
 	if hub == nil {
 		return
 	}
@@ -190,7 +192,7 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 		var inputs []WsInput
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, WsInput{
-				Address: AddressFromPubKeyHash(HashPubKey(vin.PubKey)),
+				Address: core.AddressFromPubKeyHash(core.HashPubKey(vin.PubKey)),
 			})
 		}
 
@@ -201,7 +203,7 @@ func BroadcastBlock(hub *EventHub, block *Block) {
 			}
 			if vout.Value > 0 {
 				outputs = append(outputs, WsOutput{
-					Address: AddressFromPubKeyHash(vout.PubKeyHash),
+					Address: core.AddressFromPubKeyHash(vout.PubKeyHash),
 					Value:   vout.Value,
 				})
 			}

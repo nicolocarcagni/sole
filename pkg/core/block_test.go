@@ -1,13 +1,14 @@
-package main
+package core
 
 import (
 	"bytes"
 	"testing"
 	"time"
+
 )
 
 // makeTestBlock returns a minimal valid block for testing purposes.
-// It does NOT call MineBlock or sign, so Nonce may not satisfy PoW.
+// It does NOT call consensus.MineBlock or sign, so Nonce may not satisfy PoW.
 func makeTestBlock(validator []byte) *Block {
 	tx := &Transaction{
 		ID:  []byte("test-tx-id-0001"),

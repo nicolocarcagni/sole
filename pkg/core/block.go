@@ -1,9 +1,9 @@
-package main
+package core
 
 import (
+	"encoding/gob"
 	"bytes"
 	"crypto/sha256"
-	"encoding/gob"
 	"fmt"
 	"time"
 )
@@ -85,4 +85,15 @@ func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int, val
 	}
 	block.SetHash()
 	return block
+}
+
+// DeserializeBlock deserializes a block
+func DeserializeBlock(d []byte) *Block {
+	var block Block
+	decoder := gob.NewDecoder(bytes.NewReader(d))
+	err := decoder.Decode(&block)
+	if err != nil {
+		return nil
+	}
+	return &block
 }

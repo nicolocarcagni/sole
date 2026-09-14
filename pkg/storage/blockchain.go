@@ -1,9 +1,8 @@
-package main
+package storage
 
 import (
 	"bytes"
 	"crypto/ecdsa"
-	"encoding/gob"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -13,10 +12,13 @@ import (
 	"sync"
 
 	"github.com/dgraph-io/badger/v3"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
+	"github.com/nicolocarcagni/sole/pkg/consensus"
 )
 
 const (
-	dbPath = "./data/blocks"
+	DbFile = "./data/blocks"
 )
 
 var (
@@ -25,7 +27,7 @@ var (
 	ErrBlockNotFound      = errors.New("block not found")
 )
 
-func getBadgerOptions(path string) badger.Options {
+func GetBadgerOptions(path string) badger.Options {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil
 	// opts.Truncate = true (Removed in v3)
@@ -67,11 +69,11 @@ func InitBlockchain() (*Blockchain, error) {
 	}
 
 	// Ensure data directory exists
-	if err := os.MkdirAll(dbPath, os.ModePerm); err != nil {
+	if err := os.MkdirAll(DbFile, os.ModePerm); err != nil {
 		return nil, fmt.Errorf("failed to create db directory: %s", err)
 	}
 
-	opts := getBadgerOptions(dbPath)
+	opts := GetBadgerOptions(DbFile)
 
 	db, err := badger.Open(opts)
 	if err != nil {
@@ -83,7 +85,7 @@ func InitBlockchain() (*Blockchain, error) {
 		if err != nil {
 			return err
 		}
-		fmt.Println("🌟 Genesis Block created")
+		fmt.Println("🌟 Genesis core.Block created")
 
 		serialized, err := genesis.Serialize()
 		if err != nil {
@@ -120,7 +122,7 @@ func ContinueBlockchain(address string) (*Blockchain, error) {
 	}
 
 	var lastHash []byte
-	opts := badger.DefaultOptions(dbPath)
+	opts := badger.DefaultOptions(DbFile)
 	opts.Logger = nil
 
 	db, err := badger.Open(opts)
@@ -150,7 +152,7 @@ func ContinueBlockchainReadOnly(address string) (*Blockchain, error) {
 	}
 
 	var lastHash []byte
-	opts := badger.DefaultOptions(dbPath)
+	opts := badger.DefaultOptions(DbFile)
 	opts.Logger = nil
 	opts.ReadOnly = true
 
@@ -210,15 +212,15 @@ func ContinueBlockchainSnapshot(customPath string) (*Blockchain, error) {
 	return &chain, nil
 }
 
-func (chain *Blockchain) GetBlock(blockHash []byte) (Block, error) {
-	var block Block
+func (chain *Blockchain) GetBlock(blockHash []byte) (core.Block, error) {
+	var block core.Block
 
 	err := chain.Database.View(func(txn *badger.Txn) error {
 		if item, err := txn.Get(blockHash); err != nil {
-			return errors.New("Block is not found")
+			return errors.New("core.Block is not found")
 		} else {
 			blockData, _ := item.ValueCopy(nil)
-			block = *DeserializeBlock(blockData)
+			block = *core.DeserializeBlock(blockData)
 		}
 		return nil
 	})
@@ -256,7 +258,7 @@ func (chain *Blockchain) GetBestHeight() int {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
-	var lastBlock Block
+	var lastBlock core.Block
 	// Logic: fetch last hash, get block, return height.
 
 	err := chain.Database.View(func(txn *badger.Txn) error {
@@ -271,7 +273,7 @@ func (chain *Blockchain) GetBestHeight() int {
 			return err
 		}
 		data, _ := item.ValueCopy(nil)
-		lastBlock = *DeserializeBlock(data)
+		lastBlock = *core.DeserializeBlock(data)
 		return nil
 	})
 	if err != nil {
@@ -281,7 +283,7 @@ func (chain *Blockchain) GetBestHeight() int {
 	return lastBlock.Height
 }
 
-func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.PrivateKey) (*Block, error) {
+func (chain *Blockchain) ForgeBlock(transactions []*core.Transaction, privKey ecdsa.PrivateKey) (*core.Block, error) {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
@@ -312,7 +314,7 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 		return nil, fmt.Errorf("failed to retrieve last block data: %w", err)
 	}
 
-	lastBlock := DeserializeBlock(lastBlockData)
+	lastBlock := core.DeserializeBlock(lastBlockData)
 	newHeight := lastBlock.Height + 1
 
 	// Derive the validator's 64-byte raw public key (X‖Y, 32 bytes each) BEFORE
@@ -322,15 +324,15 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 		privKey.PublicKey.Y.FillBytes(make([]byte, 32))...)
 
 	// Create block with Validator already set so the initial hash includes it.
-	newBlock := NewBlock(transactions, lastHash, newHeight, valPubKey)
+	newBlock := core.NewBlock(transactions, lastHash, newHeight, valPubKey)
 
 	// PoA Hardening: Mine the block (Find valid Nonce).
 	// The mining loop hashes the header which already contains the Validator.
-	MineBlock(newBlock)
+	consensus.MineBlock(newBlock)
 
-	// Sign the block. SignBlock will verify Validator matches privKey and that
+	// Sign the block. consensus.SignBlock will verify Validator matches privKey and that
 	// block.Hash == block.CalculateHash() before signing.
-	err = SignBlock(newBlock, privKey)
+	err = consensus.SignBlock(newBlock, privKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign block: %w", err)
 	}
@@ -367,7 +369,7 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 	return newBlock, nil
 }
 
-func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transaction) bool {
+func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.Transaction) bool {
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
 	_, err := chain.GetBlock(block.Hash)
 	if err == nil {
@@ -379,14 +381,14 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 	defer chain.Mux.Unlock()
 
 	if len(block.PrevBlockHash) > 0 {
-		var prevBlock Block
+		var prevBlock core.Block
 		err = chain.Database.View(func(txn *badger.Txn) error {
 			item, err := txn.Get(block.PrevBlockHash)
 			if err != nil {
 				return err
 			}
 			data, _ := item.ValueCopy(nil)
-			prevBlock = *DeserializeBlock(data)
+			prevBlock = *core.DeserializeBlock(data)
 			return nil
 		})
 		if err != nil {
@@ -399,7 +401,7 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 			return false
 		}
 
-		if err := ValidateBlockHeader(block, &prevBlock); err != nil {
+		if err := consensus.ValidateBlockHeader(block, &prevBlock); err != nil {
 			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
 			return false
 		}
@@ -410,19 +412,19 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 	// block with tampered fields (Validator, transactions, etc.) and a fake Hash that
 	// happens to start with 0x00 (passing the raw PoW check).
 	if !bytes.Equal(block.Hash, block.CalculateHash()) {
-		fmt.Printf("⛔ AddBlock: Block rejected — hash integrity check failed for block at height %d\n", block.Height)
+		fmt.Printf("⛔ AddBlock: core.Block rejected — hash integrity check failed for block at height %d\n", block.Height)
 		return false
 	}
 
 	// 3. Verify PoA signature
-	if !VerifyBlockSignature(block) {
-		fmt.Println("AddBlock: Block rejected - invalid PoA signature")
+	if !consensus.VerifyBlockSignature(block) {
+		fmt.Println("AddBlock: core.Block rejected - invalid PoA signature")
 		return false
 	}
 
 	// 4. Verify all internal transaction signatures (including intra-block + cross-block cache)
 	if !chain.VerifyBlockTransactions(block, txCache...) {
-		fmt.Println("AddBlock: Block rejected - invalid transaction signatures")
+		fmt.Println("AddBlock: core.Block rejected - invalid transaction signatures")
 		return false
 	}
 
@@ -459,7 +461,7 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 			return err
 		}
 		lastBlockData, _ := item.ValueCopy(nil)
-		lastBlock := DeserializeBlock(lastBlockData)
+		lastBlock := core.DeserializeBlock(lastBlockData)
 
 		if block.Height > lastBlock.Height {
 			err = txn.Set([]byte("lh"), block.Hash)
@@ -501,8 +503,8 @@ func (chain *Blockchain) GetBlockSubsidy(height int) int64 {
 }
 
 // FindUnspentTransactions returns a list of transactions containing unspent outputs
-func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
-	var unspentTXs []Transaction
+func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []core.Transaction {
+	var unspentTXs []core.Transaction
 	spentTXOs := make(map[string][]int)
 	iter := bc.Iterator()
 
@@ -547,9 +549,9 @@ func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
 }
 
 // FindTransactions searches for all transactions related to an address
-func (bc *Blockchain) FindTransactions(address string) []Transaction {
-	var transactions []Transaction
-	pubKeyHash, err := ExtractPubKeyHash(address)
+func (bc *Blockchain) FindTransactions(address string) []core.Transaction {
+	var transactions []core.Transaction
+	pubKeyHash, err := core.ExtractPubKeyHash(address)
 	if err != nil {
 		return transactions
 	}
@@ -572,7 +574,7 @@ func (bc *Blockchain) FindTransactions(address string) []Transaction {
 			} else {
 				isRelated := false
 				for _, vin := range tx.Vin {
-					if bytes.Equal(HashPubKey(vin.PubKey), pubKeyHash) {
+					if bytes.Equal(core.HashPubKey(vin.PubKey), pubKeyHash) {
 						isRelated = true
 						break
 					}
@@ -605,8 +607,8 @@ func (bc *Blockchain) FindTransactions(address string) []Transaction {
 // keyed by the original Vout index from the transaction, preserving the true
 // output position so that downstream consumers (Reindex, FindSpendableOutputs)
 // write and read the correct utxo-<txID>-<vout> keys in BadgerDB.
-func (chain *Blockchain) FindUTXO() map[string]map[int]TxOutput {
-	UTXO := make(map[string]map[int]TxOutput)
+func (chain *Blockchain) FindUTXO() map[string]map[int]core.TxOutput {
+	UTXO := make(map[string]map[int]core.TxOutput)
 	// Use a nested map for O(1) spent-output lookup instead of O(n) slice scan.
 	spentTXOs := make(map[string]map[int]bool)
 	iter := chain.Iterator()
@@ -627,7 +629,7 @@ func (chain *Blockchain) FindUTXO() map[string]map[int]TxOutput {
 				}
 
 				if UTXO[txID] == nil {
-					UTXO[txID] = make(map[int]TxOutput)
+					UTXO[txID] = make(map[int]core.TxOutput)
 				}
 				// Key is the ORIGINAL Vout index — never the compacted slice position.
 				UTXO[txID][outIdx] = out
@@ -677,8 +679,8 @@ Work:
 }
 
 // FindTransaction finds a transaction by ID (Optimized with O(1) Index)
-func (chain *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
-	// 1. Try to find using the O(1) Transaction Index
+func (chain *Blockchain) FindTransaction(ID []byte) (core.Transaction, error) {
+	// 1. Try to find using the O(1) core.Transaction Index
 	var blockHash []byte
 	err := chain.Database.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(append([]byte("tx-"), ID...))
@@ -720,12 +722,12 @@ func (chain *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 		}
 	}
 
-	return Transaction{}, errors.New("Transaction does not exist")
+	return core.Transaction{}, errors.New("core.Transaction does not exist")
 }
 
-// SignTransaction signs inputs of a Transaction
-func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey) error {
-	prevTXs := make(map[string]Transaction)
+// SignTransaction signs inputs of a core.Transaction
+func (chain *Blockchain) SignTransaction(tx *core.Transaction, privKey ecdsa.PrivateKey) error {
+	prevTXs := make(map[string]core.Transaction)
 
 	for _, vin := range tx.Vin {
 		prevTX, err := chain.FindTransaction(vin.Txid)
@@ -741,12 +743,12 @@ func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateK
 }
 
 // VerifyTransaction verifies transaction input signatures (DB-only lookup)
-func (chain *Blockchain) VerifyTransaction(tx *Transaction) bool {
+func (chain *Blockchain) VerifyTransaction(tx *core.Transaction) bool {
 	if tx.IsCoinbase() {
 		return true
 	}
 
-	prevTXs := make(map[string]Transaction)
+	prevTXs := make(map[string]core.Transaction)
 
 	for _, vin := range tx.Vin {
 		prevTX, err := chain.FindTransaction(vin.Txid)
@@ -761,7 +763,7 @@ func (chain *Blockchain) VerifyTransaction(tx *Transaction) bool {
 }
 
 // FindTransactionWithMempool checks the mempool first, then falls back to the blockchain DB.
-func (chain *Blockchain) FindTransactionWithMempool(ID []byte, mempool map[string]MempoolItem) (Transaction, error) {
+func (chain *Blockchain) FindTransactionWithMempool(ID []byte, mempool map[string]core.MempoolItem) (core.Transaction, error) {
 	txID := hex.EncodeToString(ID)
 	if item, exists := mempool[txID]; exists {
 		return item.Tx, nil
@@ -771,12 +773,12 @@ func (chain *Blockchain) FindTransactionWithMempool(ID []byte, mempool map[strin
 
 // VerifyTransactionWithMempool verifies transaction input signatures,
 // checking the mempool for unconfirmed parent transactions before the DB.
-func (chain *Blockchain) VerifyTransactionWithMempool(tx *Transaction, mempool map[string]MempoolItem) bool {
+func (chain *Blockchain) VerifyTransactionWithMempool(tx *core.Transaction, mempool map[string]core.MempoolItem) bool {
 	if tx.IsCoinbase() {
 		return true
 	}
 
-	prevTXs := make(map[string]Transaction)
+	prevTXs := make(map[string]core.Transaction)
 
 	for _, vin := range tx.Vin {
 		prevTX, err := chain.FindTransactionWithMempool(vin.Txid, mempool)
@@ -793,15 +795,15 @@ func (chain *Blockchain) VerifyTransactionWithMempool(tx *Transaction, mempool m
 // VerifyBlockTransactions validates all transaction signatures in a block
 // using a two-pass approach to handle arbitrary intra-block TX ordering.
 // The optional externalCache accumulates TXs across blocks during IBD.
-func (chain *Blockchain) VerifyBlockTransactions(block *Block, externalCache ...map[string]Transaction) bool {
+func (chain *Blockchain) VerifyBlockTransactions(block *core.Block, externalCache ...map[string]core.Transaction) bool {
 	// Extract optional external (cross-block IBD) cache
-	var crossBlockCache map[string]Transaction
+	var crossBlockCache map[string]core.Transaction
 	if len(externalCache) > 0 && externalCache[0] != nil {
 		crossBlockCache = externalCache[0]
 	}
 
 	// ── Pass 1: Pre-populate block TX cache ─────────────────────────────
-	blockTxCache := make(map[string]Transaction)
+	blockTxCache := make(map[string]core.Transaction)
 
 	// Merge cross-block IBD cache first (lower priority)
 	for k, v := range crossBlockCache {
@@ -823,7 +825,7 @@ func (chain *Blockchain) VerifyBlockTransactions(block *Block, externalCache ...
 			continue
 		}
 
-		prevTXs := make(map[string]Transaction)
+		prevTXs := make(map[string]core.Transaction)
 		for _, vin := range tx.Vin {
 			parentTxID := hex.EncodeToString(vin.Txid)
 
@@ -863,8 +865,8 @@ func (chain *Blockchain) Iterator() *BlockchainIterator {
 }
 
 // Next returns the next block from the iterator
-func (i *BlockchainIterator) Next() (*Block, error) {
-	var block *Block
+func (i *BlockchainIterator) Next() (*core.Block, error) {
+	var block *core.Block
 
 	err := i.Database.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(i.CurrentHash)
@@ -875,7 +877,7 @@ func (i *BlockchainIterator) Next() (*Block, error) {
 		if err != nil {
 			return err
 		}
-		block = DeserializeBlock(encodedBlock)
+		block = core.DeserializeBlock(encodedBlock)
 		return nil
 	})
 
@@ -890,20 +892,9 @@ func (i *BlockchainIterator) Next() (*Block, error) {
 	return block, nil
 }
 
-// DeserializeBlock deserializes a block
-func DeserializeBlock(d []byte) *Block {
-	var block Block
-	decoder := gob.NewDecoder(bytes.NewReader(d))
-	err := decoder.Decode(&block)
-	if err != nil {
-		log.Printf("⚠️ DeserializeBlock failed (%d bytes): %v", len(d), err)
-		return nil
-	}
-	return &block
-}
 
 func DBExists() bool {
-	if _, err := os.Stat(dbPath + "/MANIFEST"); os.IsNotExist(err) {
+	if _, err := os.Stat(DbFile + "/MANIFEST"); os.IsNotExist(err) {
 		return false
 	}
 	return true

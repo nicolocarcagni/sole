@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"bytes"
@@ -11,13 +11,20 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/gorilla/mux"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
+	"github.com/nicolocarcagni/sole/pkg/wallet"
+	"github.com/nicolocarcagni/sole/pkg/consensus"
+	"github.com/nicolocarcagni/sole/pkg/p2p"
 )
 
 type RestServer struct {
-	P2P *Server
+	P2P *p2p.Server
+	MempoolHub *EventHub
+	BlockHub *EventHub
 }
 
-func StartRestServer(server *Server, listenHost string, port int) {
+func StartRestServer(server *p2p.Server, listenHost string, port int) {
 	rs := RestServer{P2P: server}
 
 	router := mux.NewRouter()
@@ -48,14 +55,14 @@ func StartRestServer(server *Server, listenHost string, port int) {
 
 	// WebSocket Endpoints (no rate limiting — long-lived connections)
 	router.HandleFunc("/ws/mempool", func(w http.ResponseWriter, r *http.Request) {
-		handleWs(rs.P2P.MempoolHub, w, r)
+		handleWs(rs.MempoolHub, w, r)
 	})
 	router.HandleFunc("/ws/blocks", func(w http.ResponseWriter, r *http.Request) {
-		handleWs(rs.P2P.BlockHub, w, r)
+		handleWs(rs.BlockHub, w, r)
 	})
 
 	addr := fmt.Sprintf("%s:%d", listenHost, port)
-	fmt.Printf("🚀 API Server started on http://%s\n", addr)
+	fmt.Printf("🚀 API p2p.Server started on http://%s\n", addr)
 
 	srv := &http.Server{
 		Handler:      CORSMiddleware(router),
@@ -104,7 +111,7 @@ type MerkleProofResponse struct {
 	BlockHash   string       `json:"block_hash"`
 	BlockHeight int          `json:"block_height"`
 	MerkleRoot  string       `json:"merkle_root"`
-	Proof       []MerkleStep `json:"proof"`
+	Proof       []core.MerkleStep `json:"proof"`
 }
 
 type RawTxResponse struct {
@@ -126,7 +133,7 @@ func (rs *RestServer) getMerkleProof(w http.ResponseWriter, r *http.Request) {
 	_, err = rs.P2P.Blockchain.FindTransaction(txID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction not found"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction not found"})
 		return
 	}
 
@@ -143,7 +150,7 @@ func (rs *RestServer) getMerkleProof(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Block containing the transaction not found"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Block containing the transaction not found"})
 		return
 	}
 
@@ -159,7 +166,7 @@ func (rs *RestServer) getMerkleProof(w http.ResponseWriter, r *http.Request) {
 		txHashes = append(txHashes, tx.ID)
 	}
 
-	mTree := NewMerkleTree(txHashes)
+	mTree := core.NewMerkleTree(txHashes)
 	proof, err := mTree.GetMerklePath(txID)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -208,7 +215,7 @@ type ValidatorResponse struct {
 	Validators      []string `json:"validators"`
 }
 
-func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
+func ToJSONResponse(tx *core.Transaction) JSONTransactionResponse {
 	var inputs []JSONInput
 	var outputs []JSONOutput
 
@@ -221,7 +228,7 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 	} else {
 		for _, vin := range tx.Vin {
 			inputs = append(inputs, JSONInput{
-				SenderAddress: AddressFromPubKeyHash(HashPubKey(vin.PubKey)),
+				SenderAddress: core.AddressFromPubKeyHash(core.HashPubKey(vin.PubKey)),
 				Signature:     hex.EncodeToString(vin.Signature),
 			})
 		}
@@ -233,7 +240,7 @@ func ToJSONResponse(tx *Transaction) JSONTransactionResponse {
 		if vout.IsOPReturn() {
 			receiverAddr = "OP_RETURN: " + string(vout.PubKeyHash)
 		} else {
-			receiverAddr = AddressFromPubKeyHash(vout.PubKeyHash)
+			receiverAddr = core.AddressFromPubKeyHash(vout.PubKeyHash)
 		}
 
 		outputs = append(outputs, JSONOutput{
@@ -271,7 +278,7 @@ type JSONBlock struct {
 	Signature     string                    `json:"signature"`
 }
 
-func ToJSONBlock(block *Block) JSONBlock {
+func ToJSONBlock(block *core.Block) JSONBlock {
 	var jsonTxs []JSONTransactionResponse
 	for _, tx := range block.Transactions {
 		jsonTxs = append(jsonTxs, ToJSONResponse(tx))
@@ -292,12 +299,12 @@ func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	addr := vars["address"]
 
-	if !ValidateAddress(addr) {
+	if !wallet.ValidateAddress(addr) {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address"})
 		return
 	}
 
-	pubKeyHash, err := ExtractPubKeyHash(addr)
+	pubKeyHash, err := core.ExtractPubKeyHash(addr)
 	if err != nil {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address encoding"})
 		return
@@ -336,7 +343,7 @@ func (rs *RestServer) getRawTx(w http.ResponseWriter, r *http.Request) {
 	tx, err := rs.P2P.Blockchain.FindTransaction(txID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction not found"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction not found"})
 		return
 	}
 
@@ -347,12 +354,12 @@ func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	addr := vars["address"]
 
-	if !ValidateAddress(addr) {
+	if !wallet.ValidateAddress(addr) {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address"})
 		return
 	}
 
-	pubKeyHash, err := ExtractPubKeyHash(addr)
+	pubKeyHash, err := core.ExtractPubKeyHash(addr)
 	if err != nil {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address encoding"})
 		return
@@ -415,7 +422,7 @@ func (rs *RestServer) getBlock(w http.ResponseWriter, r *http.Request) {
 
 	block, err := rs.P2P.Blockchain.GetBlock(hash)
 	if err != nil {
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Block not found"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Block not found"})
 		return
 	}
 
@@ -428,7 +435,7 @@ func (rs *RestServer) getTransactions(w http.ResponseWriter, r *http.Request) {
 	vars := mux.Vars(r)
 	addr := vars["address"]
 
-	if !ValidateAddress(addr) {
+	if !wallet.ValidateAddress(addr) {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid address"})
 		return
 	}
@@ -456,7 +463,7 @@ func (rs *RestServer) getTransaction(w http.ResponseWriter, r *http.Request) {
 	tx, err := rs.P2P.Blockchain.FindTransaction(txID)
 	if err != nil {
 		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction not found"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction not found"})
 		return
 	}
 
@@ -479,7 +486,7 @@ func (rs *RestServer) getPeers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (rs *RestServer) getValidators(w http.ResponseWriter, r *http.Request) {
-	validators := AuthorizedValidators
+	validators := consensus.AuthorizedValidators
 	response := ValidatorResponse{
 		TotalValidators: len(validators),
 		Validators:      validators,
@@ -502,11 +509,11 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Deserialize
-	tx := DeserializeTransaction(txBytes)
+	tx := core.DeserializeTransaction(txBytes)
 
 	// ── 1. Structural & Sanity Validations ──────────────────────────────────
 	if len(tx.Vin) == 0 || len(tx.Vout) == 0 {
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction has no inputs or outputs"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction has no inputs or outputs"})
 		return
 	}
 	if tx.IsCoinbase() {
@@ -514,7 +521,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(tx.ID) == 0 || !bytes.Equal(tx.ID, tx.Hash()) {
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction ID integrity check failed"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction ID integrity check failed"})
 		return
 	}
 
@@ -522,14 +529,14 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	rs.P2P.MempoolMux.Lock()
 	mempoolLen := len(rs.P2P.Mempool)
 	rs.P2P.MempoolMux.Unlock()
-	if mempoolLen >= MaxMempoolSize {
+	if mempoolLen >= p2p.MaxMempoolSize {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "Mempool is full, try again later"})
 		return
 	}
 
 	// ── 3. Snapshot mempool for chained-transaction validation ──────────────
 	rs.P2P.MempoolMux.Lock()
-	mempoolSnapshot := make(map[string]MempoolItem, len(rs.P2P.Mempool))
+	mempoolSnapshot := make(map[string]core.MempoolItem, len(rs.P2P.Mempool))
 	for k, v := range rs.P2P.Mempool {
 		mempoolSnapshot[k] = v
 	}
@@ -549,7 +556,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 
 	// ── 5. Cryptographic Signature Verification ──────────────────────────────
 	if rs.P2P.Blockchain.VerifyTransactionWithMempool(&tx, mempoolSnapshot) == false {
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction invalid"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction invalid"})
 		return
 	}
 
@@ -576,9 +583,9 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		rs.P2P.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
-		fmt.Printf("API: Transaction added to Mempool: %s (Fee: %d)\n", txID, fee)
-		BroadcastMempoolTx(rs.P2P.MempoolHub, &tx)
+		rs.P2P.Mempool[txID] = core.MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
+		fmt.Printf("API: core.Transaction added to Mempool: %s (Fee: %d)\n", txID, fee)
+		BroadcastMempoolTx(rs.MempoolHub, &tx)
 
 		// Broadcast Inv
 		peers := rs.P2P.Host.Network().Peers()
@@ -588,6 +595,6 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 
 		json.NewEncoder(w).Encode(SuccessResponse{Status: "success", TxID: txID})
 	} else {
-		json.NewEncoder(w).Encode(ErrorResponse{Error: "Transaction already in mempool or exists"})
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction already in mempool or exists"})
 	}
 }

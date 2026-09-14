@@ -1,4 +1,4 @@
-package main
+package wallet
 
 import (
 	"bytes"
@@ -9,7 +9,7 @@ import (
 	"os"
 )
 
-const walletFile = "wallet.dat"
+const WalletFile = "wallet.dat"
 
 type Wallets struct {
 	Wallets map[string]*Wallet
@@ -88,11 +88,11 @@ func (ws *Wallets) GetAddresses() []string {
 }
 
 func (ws *Wallets) LoadFromFile() error {
-	if _, err := os.Stat(walletFile); os.IsNotExist(err) {
+	if _, err := os.Stat(WalletFile); os.IsNotExist(err) {
 		return err
 	}
 
-	fileContent, err := ioutil.ReadFile(walletFile)
+	fileContent, err := ioutil.ReadFile(WalletFile)
 	if err != nil {
 		return fmt.Errorf("failed to read wallet file: %w", err)
 	}
@@ -120,7 +120,7 @@ func (ws *Wallets) SaveToFile() error {
 		return fmt.Errorf("failed to encode wallets: %w", err)
 	}
 
-	err = ioutil.WriteFile(walletFile, content.Bytes(), 0600)
+	err = ioutil.WriteFile(WalletFile, content.Bytes(), 0600)
 	if err != nil {
 		return fmt.Errorf("failed to write wallet file: %w", err)
 	}

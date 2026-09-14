@@ -1,4 +1,4 @@
-package main
+package storage
 
 import (
 	"encoding/hex"
@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
+	"github.com/nicolocarcagni/sole/pkg/consensus"
 )
 
 // ---------------------------------------------------------------------------
@@ -37,7 +40,7 @@ func newTestBlockchain(t *testing.T) *Blockchain {
 // writeBlockToDB serializes a block and writes it to BadgerDB under its hash,
 // also updating the "lh" (last-hash) key and the tx-<id> index.
 // It bypasses ForgeBlock / AddBlock's signature validation — safe for unit tests.
-func writeBlockToDB(t *testing.T, db *badger.DB, block *Block) {
+func writeBlockToDB(t *testing.T, db *badger.DB, block *core.Block) {
 	t.Helper()
 	err := db.Update(func(txn *badger.Txn) error {
 		serialized, err := block.Serialize()
@@ -61,9 +64,9 @@ func writeBlockToDB(t *testing.T, db *badger.DB, block *Block) {
 
 // makeMinedBlock builds a block and mines it (finds a valid PoW nonce).
 // Validator and Signature are placeholder bytes; no PoA key needed.
-func makeMinedBlock(t *testing.T, txs []*Transaction, prevHash []byte, height int) *Block {
+func makeMinedBlock(t *testing.T, txs []*core.Transaction, prevHash []byte, height int) *core.Block {
 	t.Helper()
-	b := &Block{
+	b := &core.Block{
 		Timestamp:     time.Now().Unix(),
 		Transactions:  txs,
 		PrevBlockHash: prevHash,
@@ -73,7 +76,7 @@ func makeMinedBlock(t *testing.T, txs []*Transaction, prevHash []byte, height in
 		Validator:     []byte("test-validator"),
 		Signature:     []byte{},
 	}
-	MineBlock(b)
+	consensus.MineBlock(b)
 	return b
 }
 
@@ -98,10 +101,10 @@ func keyExists(t *testing.T, db *badger.DB, k string) bool {
 	return found
 }
 
-// readUTXOValue fetches and deserializes a TxOutput stored at the given key.
-func readUTXOValue(t *testing.T, db *badger.DB, k string) TxOutput {
+// readUTXOValue fetches and deserializes a core.TxOutput stored at the given key.
+func readUTXOValue(t *testing.T, db *badger.DB, k string) core.TxOutput {
 	t.Helper()
-	var out TxOutput
+	var out core.TxOutput
 	err := db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(k))
 		if err != nil {
@@ -151,10 +154,10 @@ func TestReindex_PreservesVoutIndex(t *testing.T) {
 
 	// Build TX1 with 3 outputs.
 	tx1ID := []byte("test-tx1-id-0000000001")
-	tx1 := &Transaction{
+	tx1 := &core.Transaction{
 		ID:  tx1ID,
-		Vin: []TxInput{{Txid: []byte{}, Vout: -1, Signature: nil, PubKey: []byte("coinbase")}},
-		Vout: []TxOutput{
+		Vin: []core.TxInput{{Txid: []byte{}, Vout: -1, Signature: nil, PubKey: []byte("coinbase")}},
+		Vout: []core.TxOutput{
 			{Value: 100, PubKeyHash: ownerAHash}, // Vout 0
 			{Value: 200, PubKeyHash: ownerBHash}, // Vout 1
 			{Value: 300, PubKeyHash: ownerAHash}, // Vout 2
@@ -162,27 +165,27 @@ func TestReindex_PreservesVoutIndex(t *testing.T) {
 		Timestamp: time.Now().Unix(),
 	}
 
-	// Block 1: genesis-like (empty PrevBlockHash so iterator stops here).
-	block1 := makeMinedBlock(t, []*Transaction{tx1}, []byte{}, 0)
+	// core.Block 1: genesis-like (empty PrevBlockHash so iterator stops here).
+	block1 := makeMinedBlock(t, []*core.Transaction{tx1}, []byte{}, 0)
 	chain.LastHash = block1.Hash
 	writeBlockToDB(t, chain.Database, block1)
 
 	// Build TX2 spending TX1:0 and TX1:2.
 	tx2ID := []byte("test-tx2-id-0000000002")
-	tx2 := &Transaction{
+	tx2 := &core.Transaction{
 		ID: tx2ID,
-		Vin: []TxInput{
+		Vin: []core.TxInput{
 			{Txid: tx1ID, Vout: 0, Signature: []byte("sig-a0"), PubKey: []byte("pubkey-a")}, // spends TX1:0
 			{Txid: tx1ID, Vout: 2, Signature: []byte("sig-a2"), PubKey: []byte("pubkey-a")}, // spends TX1:2
 		},
-		Vout: []TxOutput{
+		Vout: []core.TxOutput{
 			{Value: 390, PubKeyHash: ownerAHash}, // change back to Owner A
 		},
 		Timestamp: time.Now().Unix(),
 	}
 
-	// Block 2: links back to Block 1.
-	block2 := makeMinedBlock(t, []*Transaction{tx2}, block1.Hash, 1)
+	// core.Block 2: links back to core.Block 1.
+	block2 := makeMinedBlock(t, []*core.Transaction{tx2}, block1.Hash, 1)
 	chain.LastHash = block2.Hash
 	writeBlockToDB(t, chain.Database, block2)
 
@@ -253,24 +256,24 @@ func TestReindex_GenesisConsistency(t *testing.T) {
 	chain := newTestBlockchain(t)
 
 	// Build the genesis coinbase output (mirrors genesis.go exactly).
-	pubKeyHash, err := ExtractPubKeyHash(GenesisAdminAddress)
+	pubKeyHash, err := core.ExtractPubKeyHash(core.GenesisAdminAddress)
 	if err != nil {
-		t.Fatalf("ExtractPubKeyHash(GenesisAdminAddress): %v", err)
+		t.Fatalf("core.ExtractPubKeyHash(core.GenesisAdminAddress): %v", err)
 	}
 
-	txin := TxInput{[]byte{}, -1, nil, []byte(GenesisCoinbaseData)}
-	txout, _ := NewTxOutput(int64(GenesisReward*100000000), GenesisAdminAddress)
+	txin := core.TxInput{[]byte{}, -1, nil, []byte(core.GenesisCoinbaseData)}
+	txout, _ := core.NewTxOutput(int64(core.GenesisReward*100000000), core.GenesisAdminAddress)
 	txout.PubKeyHash = pubKeyHash
-	genesisTX := &Transaction{
+	genesisTX := &core.Transaction{
 		ID:        []byte("SOLE_GENESIS_TX_ID"),
-		Vin:       []TxInput{txin},
-		Vout:      []TxOutput{*txout},
-		Timestamp: int64(GenesisTimestamp),
+		Vin:       []core.TxInput{txin},
+		Vout:      []core.TxOutput{*txout},
+		Timestamp: int64(core.GenesisTimestamp),
 	}
 
-	// Use time.Now() as the block timestamp so MineBlock doesn't hit a
+	// Use time.Now() as the block timestamp so consensus.MineBlock doesn't hit a
 	// historically-fixed timestamp that could affect nonce difficulty.
-	genesisBlock := makeMinedBlock(t, []*Transaction{genesisTX}, []byte{}, 0)
+	genesisBlock := makeMinedBlock(t, []*core.Transaction{genesisTX}, []byte{}, 0)
 	chain.LastHash = genesisBlock.Hash
 	writeBlockToDB(t, chain.Database, genesisBlock)
 
@@ -287,12 +290,12 @@ func TestReindex_GenesisConsistency(t *testing.T) {
 	}
 
 	out0 := readUTXOValue(t, chain.Database, key0)
-	wantValue := int64(GenesisReward * 100000000)
+	wantValue := int64(core.GenesisReward * 100000000)
 	if out0.Value != wantValue {
 		t.Errorf("FAIL: genesis output value = %d, want %d", out0.Value, wantValue)
 	}
 	if !out0.IsLockedWithKey(pubKeyHash) {
-		t.Errorf("FAIL: genesis output is not locked to GenesisAdminAddress (PubKeyHash %x)", out0.PubKeyHash)
+		t.Errorf("FAIL: genesis output is not locked to core.GenesisAdminAddress (PubKeyHash %x)", out0.PubKeyHash)
 	}
 
 	// FindSpendableOutputs must resolve genesis admin's output at index 0.

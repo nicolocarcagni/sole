@@ -1,4 +1,4 @@
-package main
+package p2p
 
 import (
 	"bytes"
@@ -24,6 +24,10 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	"github.com/multiformats/go-multiaddr"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
+	"github.com/nicolocarcagni/sole/pkg/storage"
+	
 )
 
 const (
@@ -42,28 +46,24 @@ var (
 	}
 )
 
-type MempoolItem struct {
-	Tx      Transaction
-	AddedAt int64
-}
 
 type Server struct {
+	OnNewTx func(*core.Transaction)
+	OnNewBlock func(*core.Block)
 	Host             host.Host
-	Blockchain       *Blockchain
-	UTXOSet          *UTXOSet
+	Blockchain       *storage.Blockchain
+	UTXOSet          *storage.UTXOSet
 	MinerAddr        string
 	ValidatorPrivKey *ecdsa.PrivateKey
 	KnownPeers       map[string]string // PeerID string -> Addr
 	KnownPeersMux    sync.RWMutex
-	Mempool          map[string]MempoolItem
+	Mempool          map[string]core.MempoolItem
 	MempoolMux       sync.Mutex
 
-	MempoolHub *EventHub
-	BlockHub   *EventHub
 
 	SyncingFrom    peer.ID        // Peer we are currently syncing from
 	IsSyncing      bool           // True while IBD is in progress
-	BlockBuffer    map[int]*Block // Height → Block buffer for ordered application
+	BlockBuffer    map[int]*core.Block // Height → core.Block buffer for ordered application
 	ExpectedBlocks int            // Total blocks expected during IBD
 	BlockBufferMux sync.Mutex
 }
@@ -203,28 +203,22 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		bootnodesToUse = DefaultBootnodes
 	}
 
-	chain, err := ContinueBlockchain("")
+	chain, err := storage.ContinueBlockchain("")
 	if err != nil {
 		return nil, fmt.Errorf("failed to continue blockchain: %w", err)
 	}
-	UTXOSet := &UTXOSet{chain}
+	utxoSet := &storage.UTXOSet{Blockchain: chain}
 
-	mempoolHub := NewEventHub()
-	go mempoolHub.Run()
-	blockHub := NewEventHub()
-	go blockHub.Run()
 
 	server := &Server{
 		Host:             h,
 		Blockchain:       chain,
-		UTXOSet:          UTXOSet,
+		UTXOSet:          utxoSet,
 		MinerAddr:        cfg.MinerAddr,
 		ValidatorPrivKey: cfg.PrivKey,
 		KnownPeers:       make(map[string]string),
-		Mempool:          make(map[string]MempoolItem),
-		MempoolHub:       mempoolHub,
-		BlockHub:         blockHub,
-		BlockBuffer:      make(map[int]*Block),
+		Mempool:          make(map[string]core.MempoolItem),
+		BlockBuffer:      make(map[int]*core.Block),
 	}
 
 	// Set Stream Handler
@@ -243,10 +237,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 
 	fmt.Println()
-	fmt.Println(ColorGreen + "──────────────────────────────────────────────────────────────────────" + ColorReset)
-	fmt.Printf(" ☀️  SOLE NODE STARTED (Port: "+ColorYellow+"%d"+ColorReset+")\n", cfg.Port)
-	fmt.Printf(" 🆔 Peer ID: "+ColorCyan+"%s"+ColorReset+"\n", h.ID().String())
-	fmt.Println(ColorGreen + "──────────────────────────────────────────────────────────────────────" + ColorReset)
+	fmt.Println("──────────────────────────────────────────────────────────────────────")
+	fmt.Printf(" ☀️  SOLE NODE STARTED (Port: %d)\n", cfg.Port)
+	fmt.Printf(" 🆔 Peer ID: %s\n", h.ID().String())
+	fmt.Println("──────────────────────────────────────────────────────────────────────")
 	fmt.Println()
 	fmt.Println(" 🔗 Listen Addresses:")
 
@@ -256,9 +250,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 
 		// Visual emphasis for public/LAN IPs
 		if strings.Contains(fullAddr, "/127.0.0.1/") {
-			fmt.Printf("   "+ColorYellow+"(Local)"+ColorReset+"  %s\n", fullAddr)
+			fmt.Printf("   (Local)  %s\n", fullAddr)
 		} else {
-			fmt.Printf("   "+ColorGreen+"👉(Public)"+ColorReset+" %s\n", fullAddr)
+			fmt.Printf("   👉(Public) %s\n", fullAddr)
 		}
 	}
 	return server, nil
@@ -433,7 +427,7 @@ func (s *Server) HandleVersion(request []byte, peerID peer.ID) {
 		s.BlockBufferMux.Lock()
 		s.IsSyncing = true
 		s.SyncingFrom = peerID
-		s.BlockBuffer = make(map[int]*Block)
+		s.BlockBuffer = make(map[int]*core.Block)
 		s.BlockBufferMux.Unlock()
 
 		fmt.Printf("📦 [IBD] Starting sync from %s (local: %d, remote: %d)\n", ShortID(peerID.String()), myBestHeight, foreignerBestHeight)
@@ -508,10 +502,10 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	}
 
 	if payload.Type == "block" {
-		fmt.Printf("📦 [P2P] Data Request (Block) | Hash: %x | Peer: %s\n", payload.ID[:4], ShortID(peerID.String()))
+		fmt.Printf("📦 [P2P] Data Request (core.Block) | Hash: %x | Peer: %s\n", payload.ID[:4], ShortID(peerID.String()))
 		block, err := s.Blockchain.GetBlock(payload.ID)
 		if err != nil {
-			fmt.Printf("⚠️  Object (Block) not found for Hash: %x\n", payload.ID)
+			fmt.Printf("⚠️  Object (core.Block) not found for Hash: %x\n", payload.ID)
 			return
 		}
 		s.SendBlock(peerID, &block)
@@ -544,7 +538,7 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 		return
 	}
 
-	block := DeserializeBlock(payload.Block)
+	block := core.DeserializeBlock(payload.Block)
 	if block == nil {
 		log.Printf("⚠️ [HandleBlock] Failed to deserialize block from %s. Dropping.", ShortID(peerID.String()))
 		return
@@ -574,16 +568,16 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 
 		// Validate UTXOs (Double-spend check) before processing the block
 		if !s.UTXOSet.ValidateBlockTransactions(block) {
-			fmt.Printf("⛔ Block %x rejected: Contains double-spends or invalid inputs.\n", block.Hash)
+			fmt.Printf("⛔ core.Block %x rejected: Contains double-spends or invalid inputs.\n", block.Hash)
 			return
 		}
 
 		if s.Blockchain.AddBlock(block) {
 			s.UTXOSet.Update(block)
-			fmt.Printf("✅ Block added %x and UTXO set updated.\n", block.Hash)
-			BroadcastBlock(s.BlockHub, block)
+			fmt.Printf("✅ core.Block added %x and UTXO set updated.\n", block.Hash)
+			if s.OnNewBlock != nil { s.OnNewBlock(block) }
 		} else {
-			fmt.Printf("Block discarded or duplicate: %x\n", block.Hash)
+			fmt.Printf("core.Block discarded or duplicate: %x\n", block.Hash)
 		}
 
 		// Clean mempool
@@ -603,7 +597,7 @@ func (s *Server) applyBufferedBlocks() {
 	defer func() {
 		// Reset IBD state
 		s.IsSyncing = false
-		s.BlockBuffer = make(map[int]*Block)
+		s.BlockBuffer = make(map[int]*core.Block)
 		s.ExpectedBlocks = 0
 		s.BlockBufferMux.Unlock()
 	}()
@@ -621,7 +615,7 @@ func (s *Server) applyBufferedBlocks() {
 	applied := 0
 	// Cumulative cache: accumulates verified TXs across blocks so
 	// cross-block dependencies within this IBD batch resolve in-memory.
-	ibdTxCache := make(map[string]Transaction)
+	ibdTxCache := make(map[string]core.Transaction)
 
 	for _, h := range heights {
 		block := s.BlockBuffer[h]
@@ -639,7 +633,7 @@ func (s *Server) applyBufferedBlocks() {
 	// Broadcast the tip block to WebSocket clients
 	if len(heights) > 0 {
 		if tipBlock := s.BlockBuffer[heights[len(heights)-1]]; tipBlock != nil {
-			BroadcastBlock(s.BlockHub, tipBlock)
+			if s.OnNewBlock != nil { s.OnNewBlock(tipBlock) }
 		}
 	}
 
@@ -664,7 +658,7 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 
 	txData := payload.Transaction
-	tx := DeserializeTransaction(txData)
+	tx := core.DeserializeTransaction(txData)
 
 	// ── 1. Structural & Sanity Validations ──────────────────────────────────
 	// Reject empty or malformed transactions.
@@ -740,9 +734,9 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 
 	// ── 7. Admit & Relay ─────────────────────────────────────────────────────
-	fmt.Printf("New Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
-	s.Mempool[txID] = MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
-	BroadcastMempoolTx(s.MempoolHub, &tx)
+	fmt.Printf("New core.Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
+	s.Mempool[txID] = core.MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
+	if s.OnNewTx != nil { s.OnNewTx(&tx) }
 
 	peers := s.Host.Network().Peers()
 	for _, p := range peers {
@@ -786,7 +780,7 @@ func (s *Server) AttemptMine() {
 	fmt.Println("Forging new block with mempool transactions...")
 
 	type txWithFee struct {
-		tx  *Transaction
+		tx  *core.Transaction
 		fee int64
 	}
 
@@ -818,7 +812,7 @@ func (s *Server) AttemptMine() {
 		return validTxs[i].fee > validTxs[j].fee
 	})
 
-	var txs []*Transaction
+	var txs []*core.Transaction
 	for _, twf := range validTxs {
 		txs = append(txs, twf.tx)
 		totalFees += twf.fee
@@ -829,14 +823,14 @@ func (s *Server) AttemptMine() {
 	subsidy := s.Blockchain.GetBlockSubsidy(nextHeight)
 
 	totalReward := subsidy + totalFees
-	cbTx, err := NewCoinbaseTX(s.MinerAddr, "", totalReward)
+	cbTx, err := core.NewCoinbaseTX(s.MinerAddr, "", totalReward)
 	if err != nil {
 		fmt.Printf("⚠️ Failed to create coinbase tx: %v\n", err)
 		return
 	}
 
 	// Detect and evict conflicting transactions instead of wiping the entire mempool
-	prospectiveBlock := &Block{Transactions: append([]*Transaction{cbTx}, txs...)}
+	prospectiveBlock := &core.Block{Transactions: append([]*core.Transaction{cbTx}, txs...)}
 	if !s.UTXOSet.ValidateBlockTransactions(prospectiveBlock) {
 		fmt.Println("⚠️  Mempool contains conflicting transactions. Evicting conflicts...")
 
@@ -874,17 +868,17 @@ func (s *Server) AttemptMine() {
 
 		// Rebuild the block with clean transactions
 		totalReward = subsidy + totalFees
-		cbTx, err = NewCoinbaseTX(s.MinerAddr, "", totalReward)
+		cbTx, err = core.NewCoinbaseTX(s.MinerAddr, "", totalReward)
 		if err != nil {
 			fmt.Printf("⚠️ Failed to create coinbase tx: %v\n", err)
 			return
 		}
-		txs = []*Transaction{cbTx}
+		txs = []*core.Transaction{cbTx}
 		for _, twf := range cleanTxs {
 			txs = append(txs, twf.tx)
 		}
 	} else {
-		txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
+		txs = append([]*core.Transaction{cbTx}, txs...) // Coinbase first
 	}
 
 	newBlock, err := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
@@ -894,10 +888,10 @@ func (s *Server) AttemptMine() {
 	}
 	err = s.UTXOSet.Update(newBlock)
 	if err != nil {
-		fmt.Printf("⚠️ UTXOSet update failed: %v\n", err)
+		fmt.Printf("⚠️ storage.UTXOSet update failed: %v\n", err)
 		return
 	}
-	BroadcastBlock(s.BlockHub, newBlock)
+	if s.OnNewBlock != nil { s.OnNewBlock(newBlock) }
 
 	// Selectively evict only the transactions that were included in the new block.
 	// Legitimate unconfirmed transactions that were not included (e.g. arrived
@@ -944,7 +938,7 @@ func (s *Server) SendGetData(peerID peer.ID, kind string, id []byte) {
 	s.SendData(peerID, request)
 }
 
-func (s *Server) SendBlock(peerID peer.ID, block *Block) {
+func (s *Server) SendBlock(peerID peer.ID, block *core.Block) {
 	serBlock, _ := block.Serialize()
 	data := BlockMsg{s.Host.ID().String(), serBlock}
 	payload, _ := GobEncode(data)
@@ -952,7 +946,7 @@ func (s *Server) SendBlock(peerID peer.ID, block *Block) {
 	s.SendData(peerID, request)
 }
 
-func (s *Server) SendTx(peerID peer.ID, tx *Transaction) {
+func (s *Server) SendTx(peerID peer.ID, tx *core.Transaction) {
 	serTx := tx.Serialize()
 	data := TxMsg{s.Host.ID().String(), serTx}
 	payload, _ := GobEncode(data)

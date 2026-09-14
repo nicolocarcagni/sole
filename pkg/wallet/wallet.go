@@ -1,4 +1,4 @@
-package main
+package wallet
 
 import (
 	"bytes"
@@ -13,11 +13,11 @@ import (
 	"strings"
 
 	"github.com/tyler-smith/go-bip39"
-	"golang.org/x/crypto/ripemd160"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
 const (
-	version = byte(0x00) // Hex for '0', similar to Bitcoin
 )
 
 type Wallet struct {
@@ -108,8 +108,8 @@ func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
 }
 
 func (w Wallet) GetAddress() string {
-	pubKeyHash := HashPubKey(w.PublicKey)
-	return AddressFromPubKeyHash(pubKeyHash)
+	pubKeyHash := core.HashPubKey(w.PublicKey)
+	return core.AddressFromPubKeyHash(pubKeyHash)
 }
 
 func (w Wallet) GetPrivateKey() (ecdsa.PrivateKey, error) {
@@ -120,18 +120,9 @@ func (w Wallet) GetPrivateKey() (ecdsa.PrivateKey, error) {
 	return *key, nil
 }
 
-func HashPubKey(pubKey []byte) []byte {
-	publicSHA256 := sha256.Sum256(pubKey)
-
-	RIPEMD160Hasher := ripemd160.New()
-	_, _ = RIPEMD160Hasher.Write(publicSHA256[:])
-	publicRIPEMD160 := RIPEMD160Hasher.Sum(nil)
-
-	return publicRIPEMD160
-}
 
 func ValidateAddress(address string) bool {
-	pubKeyHash, err := Base58Decode([]byte(address))
+	pubKeyHash, err := core.Base58Decode([]byte(address))
 	if err != nil {
 		return false
 	}
@@ -141,7 +132,11 @@ func ValidateAddress(address string) bool {
 	actualChecksum := pubKeyHash[len(pubKeyHash)-4:]
 	version := pubKeyHash[0]
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-	targetChecksum := checksum(append([]byte{version}, pubKeyHash...))
+	targetChecksum := core.Checksum(append([]byte{version}, pubKeyHash...))
 
 	return bytes.Equal(actualChecksum, targetChecksum)
+}
+
+func (w *Wallet) GetValidatorHex() string {
+	return hex.EncodeToString(w.PublicKey)
 }

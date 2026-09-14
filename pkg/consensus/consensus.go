@@ -1,4 +1,4 @@
-package main
+package consensus
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"math/big"
 	"time"
+
+	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
 // AuthorizedValidators contains the hex-encoded public keys of authorized validators
@@ -40,7 +42,7 @@ func GetSignatureBytes(r, s *big.Int) []byte {
 	return sigBytes
 }
 
-func SignBlock(block *Block, privKey ecdsa.PrivateKey) error {
+func SignBlock(block *core.Block, privKey ecdsa.PrivateKey) error {
 	// Derive the 64-byte raw public key (X‖Y, 32 bytes each) from the private key.
 	keyX := privKey.PublicKey.X.FillBytes(make([]byte, 32))
 	keyY := privKey.PublicKey.Y.FillBytes(make([]byte, 32))
@@ -70,7 +72,7 @@ func SignBlock(block *Block, privKey ecdsa.PrivateKey) error {
 	return nil
 }
 
-func VerifyBlockSignature(block *Block) bool {
+func VerifyBlockSignature(block *core.Block) bool {
 	if len(block.Signature) != 64 {
 		fmt.Printf("PoA: Invalid signature length. Expected 64, Got %d\n", len(block.Signature))
 		return false
@@ -110,16 +112,13 @@ func VerifyBlockSignature(block *Block) bool {
 	s := new(big.Int).SetBytes(block.Signature[32:])
 
 	if !ecdsa.Verify(&pubKey, block.Hash, r, s) {
-		fmt.Printf("PoA: Block signature verification failed. len(sig)=%d\n", len(block.Signature))
+		fmt.Printf("PoA: core.Block signature verification failed. len(sig)=%d\n", len(block.Signature))
 		return false
 	}
 
 	return true
 }
 
-func GetValidatorHex(w Wallet) string {
-	return hex.EncodeToString(w.PublicKey)
-}
 
 // --- PoA Hardening: Temporal Validation & Anti-Spam ---
 
@@ -130,7 +129,7 @@ const (
 	TargetZeros = 1
 )
 
-func MineBlock(block *Block) {
+func MineBlock(block *core.Block) {
 	fmt.Printf("⛏️  Mining block %d... ", block.Height)
 	block.Nonce = 0
 
@@ -158,7 +157,7 @@ func CheckProofOfWork(hash []byte) bool {
 	return true
 }
 
-func ValidateBlockHeader(block *Block, prevBlock *Block) error {
+func ValidateBlockHeader(block *core.Block, prevBlock *core.Block) error {
 	// 0. Strict Hash Verification — the stored hash must equal the recomputed hash.
 	// This is the primary defence against header malleability: any tampered field
 	// (Validator, transactions, Nonce, Timestamp, Height, PrevBlockHash) will
@@ -176,7 +175,7 @@ func ValidateBlockHeader(block *Block, prevBlock *Block) error {
 	// 2. Drift Tolerance (Future Check)
 	now := time.Now().Unix()
 	if block.Timestamp > now+int64(DriftTolerance.Seconds()) {
-		return fmt.Errorf("timestamp too far in future (Block: %d, Now: %d, Limit: %d)", block.Timestamp, now, int64(DriftTolerance.Seconds()))
+		return fmt.Errorf("timestamp too far in future (core.Block: %d, Now: %d, Limit: %d)", block.Timestamp, now, int64(DriftTolerance.Seconds()))
 	}
 
 	// 3. Anti-Spam (Proof of Work) — checked against the verified hash.
