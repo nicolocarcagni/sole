@@ -6,7 +6,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"os"
 )
 
@@ -25,13 +24,16 @@ func CreateWallets() (*Wallets, error) {
 	return &wallets, err
 }
 
-func (ws *Wallets) AddWallet() (string, string) {
-	wallet, mnemonic := NewWallet()
+func (ws *Wallets) AddWallet() (string, string, error) {
+	wallet, mnemonic, err := NewWallet()
+	if err != nil {
+		return "", "", err
+	}
 	address := fmt.Sprintf("%s", wallet.GetAddress())
 
 	ws.Wallets[address] = wallet
 
-	return address, mnemonic
+	return address, mnemonic, nil
 }
 
 func (ws *Wallets) RecoverWallet(mnemonic string) (string, error) {
@@ -92,7 +94,7 @@ func (ws *Wallets) LoadFromFile() error {
 
 	fileContent, err := ioutil.ReadFile(walletFile)
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to read wallet file: %w", err)
 	}
 
 	var wallets Wallets
@@ -100,7 +102,7 @@ func (ws *Wallets) LoadFromFile() error {
 	decoder := gob.NewDecoder(bytes.NewReader(fileContent))
 	err = decoder.Decode(&wallets)
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to decode wallet file: %w", err)
 	}
 
 	ws.Wallets = wallets.Wallets
@@ -108,18 +110,19 @@ func (ws *Wallets) LoadFromFile() error {
 	return nil
 }
 
-func (ws *Wallets) SaveToFile() {
+func (ws *Wallets) SaveToFile() error {
 	var content bytes.Buffer
 
 	gob.Register(elliptic.P256())
 	encoder := gob.NewEncoder(&content)
 	err := encoder.Encode(ws)
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to encode wallets: %w", err)
 	}
 
 	err = ioutil.WriteFile(walletFile, content.Bytes(), 0600)
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to write wallet file: %w", err)
 	}
+	return nil
 }

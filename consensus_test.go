@@ -362,9 +362,13 @@ func openTestDB(t *testing.T, dir string) *badger.DB {
 // initTestChain stores the genesis block in db and returns a Blockchain.
 func initTestChain(t *testing.T, db *badger.DB) *Blockchain {
 	t.Helper()
-	genesis := NewGenesisBlock()
+	genesis, _ := NewGenesisBlock()
 	err := db.Update(func(txn *badger.Txn) error {
-		if err := txn.Set(genesis.Hash, genesis.Serialize()); err != nil {
+		serialized, err := genesis.Serialize()
+		if err != nil {
+			t.Fatalf("failed: %v", err)
+		}
+		if err := txn.Set(genesis.Hash, serialized); err != nil {
 			return err
 		}
 		for _, tx := range genesis.Transactions {
@@ -395,7 +399,7 @@ func TestAddBlock_AcceptsValidBlock(t *testing.T) {
 	privKey := generateTestKey(t)
 	valPubKey := authorizeKey(t, privKey)
 
-	genesis := NewGenesisBlock()
+	genesis, _ := NewGenesisBlock()
 
 	tx := &Transaction{
 		ID:        []byte("addblock-valid-tx"),
@@ -432,7 +436,7 @@ func TestAddBlock_RejectsHashMismatch(t *testing.T) {
 	privKey := generateTestKey(t)
 	valPubKey := authorizeKey(t, privKey)
 
-	genesis := NewGenesisBlock()
+	genesis, _ := NewGenesisBlock()
 
 	tx := &Transaction{
 		ID:        []byte("addblock-tampered-tx"),

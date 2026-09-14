@@ -5,7 +5,6 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 
@@ -18,14 +17,12 @@ type UTXOSet struct {
 	Blockchain *Blockchain
 }
 
-func (u UTXOSet) Reindex() {
+func (u UTXOSet) Reindex() error {
 	db := u.Blockchain.Database
 	bucketName := []byte(utxoPrefix)
 
-	// DropPrefix acquires its own internal write lock in Badger v3 and must
-	// NOT be called from within a db.Update transaction (deadlock).
 	if err := db.DropPrefix(bucketName); err != nil {
-		log.Fatalf("Fatal: Failed to clear UTXO set prefix: %v", err)
+		return fmt.Errorf("failed to clear UTXO set prefix: %w", err)
 	}
 
 	// FindUTXO now returns map[string]map[int]TxOutput where the inner key is
@@ -40,7 +37,11 @@ func (u UTXOSet) Reindex() {
 				}
 				// outIdx is the true Vout index, so this key is always correct.
 				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txId, outIdx)
-				err := txn.Set([]byte(key), SerializeUTXO(out))
+				serializedOut, err := SerializeUTXO(out)
+				if err != nil {
+					return err
+				}
+				err = txn.Set([]byte(key), serializedOut)
 				if err != nil {
 					return err
 				}
@@ -49,11 +50,12 @@ func (u UTXOSet) Reindex() {
 		return nil
 	})
 	if err != nil {
-		log.Fatalf("Fatal: Failed to rebuild UTXO set: %v", err)
+		return fmt.Errorf("failed to rebuild UTXO set: %w", err)
 	}
+	return nil
 }
 
-func (u UTXOSet) Update(block *Block) {
+func (u UTXOSet) Update(block *Block) error {
 	db := u.Blockchain.Database
 
 	err := db.Update(func(txn *badger.Txn) error {
@@ -81,7 +83,11 @@ func (u UTXOSet) Update(block *Block) {
 				txID := hex.EncodeToString(tx.ID)
 				key := fmt.Sprintf("%s%s-%d", utxoPrefix, txID, outIdx)
 
-				err := txn.Set([]byte(key), SerializeUTXO(out))
+				serializedOut, err := SerializeUTXO(out)
+				if err != nil {
+					return err
+				}
+				err = txn.Set([]byte(key), serializedOut)
 				if err != nil {
 					return err
 				}
@@ -90,11 +96,12 @@ func (u UTXOSet) Update(block *Block) {
 		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		return fmt.Errorf("failed to update UTXO set: %w", err)
 	}
+	return nil
 }
 
-func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
+func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int, error) {
 	unspentOutputs := make(map[string][]int)
 	accumulated := int64(0)
 	db := u.Blockchain.Database
@@ -121,7 +128,10 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 			txID := parts[1]
 			outIdx, _ := strconv.Atoi(parts[2])
 
-			out := DeserializeUTXO(v)
+			out, err := DeserializeUTXO(v)
+			if err != nil {
+				return err
+			}
 
 			if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
 				accumulated += out.Value
@@ -131,13 +141,13 @@ func (u UTXOSet) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, m
 		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		return 0, nil, fmt.Errorf("failed to find spendable outputs: %w", err)
 	}
 
-	return accumulated, unspentOutputs
+	return accumulated, unspentOutputs, nil
 }
 
-func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
+func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) ([]TxOutput, error) {
 	var UTXOs []TxOutput
 	db := u.Blockchain.Database
 
@@ -153,7 +163,10 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 			if err != nil {
 				return err
 			}
-			out := DeserializeUTXO(v)
+			out, err := DeserializeUTXO(v)
+			if err != nil {
+				return err
+			}
 
 			if out.IsLockedWithKey(pubKeyHash) {
 				UTXOs = append(UTXOs, out)
@@ -162,10 +175,10 @@ func (u UTXOSet) FindUnspentOutputs(pubKeyHash []byte) []TxOutput {
 		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to find unspent outputs: %w", err)
 	}
 
-	return UTXOs
+	return UTXOs, nil
 }
 
 type UTXO struct {
@@ -174,7 +187,7 @@ type UTXO struct {
 	Output TxOutput
 }
 
-func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) []UTXO {
+func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) ([]UTXO, error) {
 	var UTXOs []UTXO
 	db := u.Blockchain.Database
 
@@ -200,7 +213,10 @@ func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) []UTXO {
 			txID := parts[1]
 			outIdx, _ := strconv.Atoi(parts[2])
 
-			out := DeserializeUTXO(v)
+			out, err := DeserializeUTXO(v)
+			if err != nil {
+				return err
+			}
 
 			if out.IsLockedWithKey(pubKeyHash) {
 				UTXOs = append(UTXOs, UTXO{txID, outIdx, out})
@@ -209,13 +225,13 @@ func (u UTXOSet) FindAllUTXOs(pubKeyHash []byte) []UTXO {
 		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to find unspent outputs: %w", err)
 	}
 
-	return UTXOs
+	return UTXOs, nil
 }
 
-func (u UTXOSet) CountTransactions() int {
+func (u UTXOSet) CountTransactions() (int, error) {
 	db := u.Blockchain.Database
 	counter := 0
 
@@ -231,31 +247,31 @@ func (u UTXOSet) CountTransactions() int {
 		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		return 0, fmt.Errorf("failed to count transactions: %w", err)
 	}
 
-	return counter
+	return counter, nil
 }
 
 // Helper functions for serialization since we are storing individual TxOutputs
-func SerializeUTXO(out TxOutput) []byte {
+func SerializeUTXO(out TxOutput) ([]byte, error) {
 	var buff bytes.Buffer
 	enc := gob.NewEncoder(&buff)
 	err := enc.Encode(out)
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to serialize UTXO: %w", err)
 	}
-	return buff.Bytes()
+	return buff.Bytes(), nil
 }
 
-func DeserializeUTXO(data []byte) TxOutput {
+func DeserializeUTXO(data []byte) (TxOutput, error) {
 	var out TxOutput
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	err := dec.Decode(&out)
 	if err != nil {
-		log.Panic(err)
+		return out, fmt.Errorf("failed to deserialize UTXO: %w", err)
 	}
-	return out
+	return out, nil
 }
 
 func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
@@ -341,7 +357,10 @@ func (u UTXOSet) ValidateBlockTransactions(block *Block) bool {
 				if err != nil {
 					return err
 				}
-				out := DeserializeUTXO(v)
+				out, err := DeserializeUTXO(v)
+				if err != nil {
+					return err
+				}
 				txInputTotal += out.Value
 
 				spentInBlock[key] = true
@@ -430,7 +449,10 @@ func (u UTXOSet) CalculateFee(tx *Transaction, mempool ...map[string]MempoolItem
 			if err != nil {
 				return err
 			}
-			out := DeserializeUTXO(v)
+			out, err := DeserializeUTXO(v)
+			if err != nil {
+				return err
+			}
 			inputTotal += out.Value
 		}
 		return nil

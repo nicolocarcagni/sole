@@ -156,7 +156,7 @@ func LoadOrGenerateNodeKey(keyFile string) (crypto.PrivKey, error) {
 }
 
 // NewServer initializes the P2P server
-func NewServer(cfg ServerConfig) *Server {
+func NewServer(cfg ServerConfig) (*Server, error) {
 	// Use persistent identity
 	priv := cfg.NodeKey
 
@@ -171,7 +171,7 @@ func NewServer(cfg ServerConfig) *Server {
 	if cfg.PublicDNS != "" {
 		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/dns4/%s/tcp/%d", cfg.PublicDNS, cfg.Port))
 		if err != nil {
-			log.Fatalf("Fatal: Invalid Public DNS Multiaddr: %v", err)
+			return nil, fmt.Errorf("invalid Public DNS Multiaddr: %w", err)
 		}
 		addrFactory := func(addrs []multiaddr.Multiaddr) []multiaddr.Multiaddr {
 			return []multiaddr.Multiaddr{externalAddr}
@@ -181,7 +181,7 @@ func NewServer(cfg ServerConfig) *Server {
 	} else if cfg.PublicIP != "" {
 		externalAddr, err := multiaddr.NewMultiaddr(fmt.Sprintf("/ip4/%s/tcp/%d", cfg.PublicIP, cfg.Port))
 		if err != nil {
-			log.Fatalf("Fatal: Invalid Public IP Multiaddr: %v", err)
+			return nil, fmt.Errorf("invalid Public IP Multiaddr: %w", err)
 		}
 
 		// Factory to force announcing ONLY the external address
@@ -194,7 +194,7 @@ func NewServer(cfg ServerConfig) *Server {
 
 	h, err := libp2p.New(opts...)
 	if err != nil {
-		log.Fatalf("Fatal: Failed to start libp2p host: %v", err)
+		return nil, fmt.Errorf("failed to start libp2p host: %w", err)
 	}
 
 	// Using Default Bootnodes if needed
@@ -203,7 +203,10 @@ func NewServer(cfg ServerConfig) *Server {
 		bootnodesToUse = DefaultBootnodes
 	}
 
-	chain := ContinueBlockchain("")
+	chain, err := ContinueBlockchain("")
+	if err != nil {
+		return nil, fmt.Errorf("failed to continue blockchain: %w", err)
+	}
 	UTXOSet := &UTXOSet{chain}
 
 	mempoolHub := NewEventHub()
@@ -231,7 +234,7 @@ func NewServer(cfg ServerConfig) *Server {
 	notifee := &discoveryNotifee{h: h, server: server}
 	ser := mdns.NewMdnsService(h, discoveryNamespace, notifee)
 	if err := ser.Start(); err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to start mDNS service: %w", err)
 	}
 
 	// Bootstrap (Internet Discovery)
@@ -258,7 +261,7 @@ func NewServer(cfg ServerConfig) *Server {
 			fmt.Printf("   "+ColorGreen+"👉(Public)"+ColorReset+" %s\n", fullAddr)
 		}
 	}
-	return server
+	return server, nil
 }
 
 // Bootstrap attempts to connect to seed nodes
@@ -826,7 +829,11 @@ func (s *Server) AttemptMine() {
 	subsidy := s.Blockchain.GetBlockSubsidy(nextHeight)
 
 	totalReward := subsidy + totalFees
-	cbTx := NewCoinbaseTX(s.MinerAddr, "", totalReward)
+	cbTx, err := NewCoinbaseTX(s.MinerAddr, "", totalReward)
+	if err != nil {
+		fmt.Printf("⚠️ Failed to create coinbase tx: %v\n", err)
+		return
+	}
 
 	// Detect and evict conflicting transactions instead of wiping the entire mempool
 	prospectiveBlock := &Block{Transactions: append([]*Transaction{cbTx}, txs...)}
@@ -867,7 +874,11 @@ func (s *Server) AttemptMine() {
 
 		// Rebuild the block with clean transactions
 		totalReward = subsidy + totalFees
-		cbTx = NewCoinbaseTX(s.MinerAddr, "", totalReward)
+		cbTx, err = NewCoinbaseTX(s.MinerAddr, "", totalReward)
+		if err != nil {
+			fmt.Printf("⚠️ Failed to create coinbase tx: %v\n", err)
+			return
+		}
 		txs = []*Transaction{cbTx}
 		for _, twf := range cleanTxs {
 			txs = append(txs, twf.tx)
@@ -876,8 +887,16 @@ func (s *Server) AttemptMine() {
 		txs = append([]*Transaction{cbTx}, txs...) // Coinbase first
 	}
 
-	newBlock := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
-	s.UTXOSet.Update(newBlock)
+	newBlock, err := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
+	if err != nil {
+		fmt.Printf("⚠️ ForgeBlock failed: %v\n", err)
+		return
+	}
+	err = s.UTXOSet.Update(newBlock)
+	if err != nil {
+		fmt.Printf("⚠️ UTXOSet update failed: %v\n", err)
+		return
+	}
 	BroadcastBlock(s.BlockHub, newBlock)
 
 	// Selectively evict only the transactions that were included in the new block.
@@ -901,40 +920,42 @@ func (s *Server) AttemptMine() {
 
 func (s *Server) SendVersion(peerID peer.ID) {
 	bestHeight := s.Blockchain.GetBestHeight()
-	payload := GobEncode(Version{1, bestHeight, s.Host.ID().String()})
+	payload, _ := GobEncode(Version{1, bestHeight, s.Host.ID().String()})
 	request := append(CommandToBytes("version"), payload...)
 	s.SendData(peerID, request)
 }
 
 func (s *Server) SendGetBlocks(peerID peer.ID) {
-	payload := GobEncode(Version{1, 0, s.Host.ID().String()})
+	payload, _ := GobEncode(Version{1, 0, s.Host.ID().String()})
 	request := append(CommandToBytes("getblocks"), payload...)
 	s.SendData(peerID, request)
 }
 
 func (s *Server) SendInv(peerID peer.ID, kind string, items [][]byte) {
 	inventory := Inv{s.Host.ID().String(), kind, items}
-	payload := GobEncode(inventory)
+	payload, _ := GobEncode(inventory)
 	request := append(CommandToBytes("inv"), payload...)
 	s.SendData(peerID, request)
 }
 
 func (s *Server) SendGetData(peerID peer.ID, kind string, id []byte) {
-	payload := GobEncode(GetData{s.Host.ID().String(), kind, id})
+	payload, _ := GobEncode(GetData{s.Host.ID().String(), kind, id})
 	request := append(CommandToBytes("getdata"), payload...)
 	s.SendData(peerID, request)
 }
 
 func (s *Server) SendBlock(peerID peer.ID, block *Block) {
-	data := BlockMsg{s.Host.ID().String(), block.Serialize()}
-	payload := GobEncode(data)
+	serBlock, _ := block.Serialize()
+	data := BlockMsg{s.Host.ID().String(), serBlock}
+	payload, _ := GobEncode(data)
 	request := append(CommandToBytes("block"), payload...)
 	s.SendData(peerID, request)
 }
 
 func (s *Server) SendTx(peerID peer.ID, tx *Transaction) {
-	data := TxMsg{s.Host.ID().String(), tx.Serialize()}
-	payload := GobEncode(data)
+	serTx := tx.Serialize()
+	data := TxMsg{s.Host.ID().String(), serTx}
+	payload, _ := GobEncode(data)
 	request := append(CommandToBytes("tx"), payload...)
 	s.SendData(peerID, request)
 }
@@ -981,12 +1002,12 @@ func BytesToCommand(bytes []byte) string {
 	return string(command)
 }
 
-func GobEncode(data interface{}) []byte {
+func GobEncode(data interface{}) ([]byte, error) {
 	var buff bytes.Buffer
 	enc := gob.NewEncoder(&buff)
 	err := enc.Encode(data)
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("GobEncode failed: %w", err)
 	}
-	return buff.Bytes()
+	return buff.Bytes(), nil
 }

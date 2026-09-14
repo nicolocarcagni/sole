@@ -303,7 +303,11 @@ func (rs *RestServer) getBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	utxos := rs.P2P.UTXOSet.FindUnspentOutputs(pubKeyHash)
+	utxos, err := rs.P2P.UTXOSet.FindUnspentOutputs(pubKeyHash)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to find unspent outputs"})
+		return
+	}
 	balance := int64(0)
 
 	for _, out := range utxos {
@@ -365,7 +369,11 @@ func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
 	}
 	rs.P2P.MempoolMux.Unlock()
 
-	utxos := rs.P2P.UTXOSet.FindAllUTXOs(pubKeyHash)
+	utxos, err := rs.P2P.UTXOSet.FindAllUTXOs(pubKeyHash)
+	if err != nil {
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Failed to find all UTXOs"})
+		return
+	}
 	var response []UTXOResponse
 
 	for _, u := range utxos {

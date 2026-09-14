@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -322,7 +321,8 @@ func startNode(cmd *cobra.Command, args []string) {
 				fmt.Printf("⛔ ERROR: Private Key not found for address %s. Wallet file missing.\n", nodeMiner)
 				os.Exit(1)
 			}
-			log.Panic("Error loading wallets:", err)
+			fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
+			os.Exit(1)
 		}
 
 		wallet := wallets.GetWalletRef(nodeMiner)
@@ -360,7 +360,8 @@ func startNode(cmd *cobra.Command, args []string) {
 	nodeKeyPath := "node_key.dat"
 	privKeyP2P, err := LoadOrGenerateNodeKey(nodeKeyPath)
 	if err != nil {
-		log.Panic("Error loading node key:", err)
+		fmt.Fprintf(os.Stderr, "Error: loading node key: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Config
@@ -376,7 +377,11 @@ func startNode(cmd *cobra.Command, args []string) {
 	}
 
 	// Initialize P2P Server
-	server := NewServer(cfg)
+	server, err := NewServer(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating server: %v\n", err)
+		os.Exit(1)
+	}
 	// We handle DB closing manually on signal
 	// defer server.Blockchain.Database.Close()
 
@@ -439,8 +444,16 @@ func runInit(cmd *cobra.Command, args []string) {
 
 func createWallet(cmd *cobra.Command, args []string) {
 	wallets, _ := CreateWallets()
-	address, mnemonic := wallets.AddWallet()
-	wallets.SaveToFile()
+	address, mnemonic, err := wallets.AddWallet()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error creating wallet: %v\n", err)
+		os.Exit(1)
+	}
+	err = wallets.SaveToFile()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving wallet: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Println(ColorRed + "⚠️  IMPORTANT: Write down these 12 words." + ColorReset)
 	fmt.Println(ColorYellow + "If you lose them, you lose your SOLE forever." + ColorReset)
@@ -454,10 +467,14 @@ func runImportWallet(cmd *cobra.Command, args []string) {
 	wallets, _ := CreateWallets()
 	address, err := wallets.ImportWallet(privKeyFlag)
 	if err != nil {
-		log.Panic(err)
+		fmt.Fprintf(os.Stderr, "Error: importing wallet: %v\n", err)
+		os.Exit(1)
 	}
 
-	wallets.SaveToFile()
+	if err := wallets.SaveToFile(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: saving wallet: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("Success! Wallet imported. Address: %s\n", address)
 }
@@ -491,7 +508,8 @@ func runRemoveWallet(cmd *cobra.Command, args []string) {
 
 	wallets, err := CreateWallets()
 	if err != nil {
-		log.Panic(err)
+		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
+		os.Exit(1)
 	}
 
 	if wallets.GetWalletRef(addressFlag) == nil {
@@ -569,7 +587,8 @@ func send(cmd *cobra.Command, args []string) {
 
 	wallets, err := CreateWallets()
 	if err != nil {
-		log.Panic(err)
+		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
+		os.Exit(1)
 	}
 	wallet := wallets.GetWalletRef(fromFlag)
 	if wallet == nil {
@@ -644,9 +663,11 @@ func send(cmd *cobra.Command, args []string) {
 		}
 		outputs = append(outputs, TxOutput{0, []byte(memo)})
 	}
-	outputs = append(outputs, *NewTxOutput(amountInt, toFlag))
+	outDest, _ := NewTxOutput(amountInt, toFlag)
+	outputs = append(outputs, *outDest)
 	if accumulated > totalRequired {
-		outputs = append(outputs, *NewTxOutput(accumulated-totalRequired, fromFlag))
+		outChange, _ := NewTxOutput(accumulated-totalRequired, fromFlag)
+		outputs = append(outputs, *outChange)
 	}
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
@@ -654,7 +675,8 @@ func send(cmd *cobra.Command, args []string) {
 	tx.Sign(privKey, prevTXs)
 
 	if dryRunFlag {
-		fmt.Printf("Dry-Run: Transaction Hex:\n%x\n", tx.Serialize())
+		serializedTx := tx.Serialize()
+		fmt.Printf("Dry-Run: Transaction Hex:\n%x\n", serializedTx)
 		return
 	}
 
@@ -688,13 +710,20 @@ func send(cmd *cobra.Command, args []string) {
 }
 
 func printChain(cmd *cobra.Command, args []string) {
-	chain := ContinueBlockchain("")
+	chain, err := ContinueBlockchain("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error continuing blockchain: %v\n", err)
+		os.Exit(1)
+	}
 	defer chain.Database.Close()
 
 	iter := chain.Iterator()
 
 	for {
-		block := iter.Next()
+		block, err := iter.Next()
+		if err != nil || block == nil {
+			break
+		}
 
 		fmt.Printf("============ Block %x ============\n", block.Hash)
 		fmt.Printf("Height:    %d\n", block.Height)
@@ -716,12 +745,14 @@ func printChain(cmd *cobra.Command, args []string) {
 
 func printWallet(cmd *cobra.Command, args []string) {
 	if !ValidateAddress(addressFlag) {
-		log.Panic("Error: Invalid Address")
+		fmt.Fprintf(os.Stderr, "Error: invalid address %q\n", addressFlag)
+		os.Exit(1)
 	}
 
 	wallets, err := CreateWallets()
 	if err != nil {
-		log.Panic(err)
+		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
+		os.Exit(1)
 	}
 
 	wallet := wallets.GetWalletRef(addressFlag)
@@ -753,7 +784,8 @@ func listAddresses(cmd *cobra.Command, args []string) {
 			fmt.Println("No wallets found.")
 			return
 		}
-		log.Panic(err)
+		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
+		os.Exit(1)
 	}
 	addresses := wallets.GetAddresses()
 
@@ -765,14 +797,22 @@ func listAddresses(cmd *cobra.Command, args []string) {
 }
 
 func reindexUTXO(cmd *cobra.Command, args []string) {
-	chain := ContinueBlockchain("")
+	chain, err := ContinueBlockchain("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error continuing blockchain: %v\n", err)
+		os.Exit(1)
+	}
 	defer chain.Database.Close()
 
 	UTXOSet := UTXOSet{chain}
 	UTXOSet.Reindex()
 
 	// Re-add reindexUTXO at end of file if it was cut off, or just append runResetChain
-	count := UTXOSet.CountTransactions()
+	count, err := UTXOSet.CountTransactions()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error counting transactions: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Printf("✅ Reindexing completed! There are %d transactions in the UTXO set.\n", count)
 }
 
@@ -793,7 +833,8 @@ func runResetChain(cmd *cobra.Command, args []string) {
 
 	err := os.RemoveAll(dbPath)
 	if err != nil {
-		log.Panic(err)
+		fmt.Fprintf(os.Stderr, "Error: removing blockchain directory: %v\n", err)
+		os.Exit(1)
 	}
 	fmt.Println("✅ Blockchain database deleted.")
 }

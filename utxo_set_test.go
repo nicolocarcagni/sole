@@ -40,7 +40,11 @@ func newTestBlockchain(t *testing.T) *Blockchain {
 func writeBlockToDB(t *testing.T, db *badger.DB, block *Block) {
 	t.Helper()
 	err := db.Update(func(txn *badger.Txn) error {
-		if err := txn.Set(block.Hash, block.Serialize()); err != nil {
+		serialized, err := block.Serialize()
+		if err != nil {
+			t.Fatalf("failed: %v", err)
+		}
+		if err := txn.Set(block.Hash, serialized); err != nil {
 			return err
 		}
 		for _, tx := range block.Transactions {
@@ -107,7 +111,10 @@ func readUTXOValue(t *testing.T, db *badger.DB, k string) TxOutput {
 		if err != nil {
 			return err
 		}
-		out = DeserializeUTXO(v)
+		out, err = DeserializeUTXO(v)
+		if err != nil {
+			t.Fatalf("failed: %v", err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -213,7 +220,10 @@ func TestReindex_PreservesVoutIndex(t *testing.T) {
 
 	// --- Assertions: FindSpendableOutputs for Owner B ---
 	// Must return TX1 with index 1 — never index 0.
-	_, spendableB := utxoSet.FindSpendableOutputs(ownerBHash, 1)
+	_, spendableB, err := utxoSet.FindSpendableOutputs(ownerBHash, 1)
+	if err != nil {
+		t.Fatalf("FAIL: FindSpendableOutputs(OwnerB) returned error: %v", err)
+	}
 	tx1Indices, hasTX1 := spendableB[tx1IDHex]
 	if !hasTX1 {
 		t.Errorf("FAIL: FindSpendableOutputs(OwnerB) returned no outputs for TX1")
@@ -223,7 +233,10 @@ func TestReindex_PreservesVoutIndex(t *testing.T) {
 
 	// --- Assertions: FindSpendableOutputs for Owner A has no TX1 outputs ---
 	// Owner A's only remaining UTXO is from TX2 (the change output), not TX1.
-	_, spendableA := utxoSet.FindSpendableOutputs(ownerAHash, 1)
+	_, spendableA, err2 := utxoSet.FindSpendableOutputs(ownerAHash, 1)
+	if err2 != nil {
+		t.Fatalf("FAIL: FindSpendableOutputs(OwnerA) returned error: %v", err2)
+	}
 	if indices, ok := spendableA[tx1IDHex]; ok {
 		t.Errorf("FAIL: FindSpendableOutputs(OwnerA) returned TX1 indices %v; expected none (all TX1:OwnerA outputs were spent)", indices)
 	}
@@ -246,7 +259,7 @@ func TestReindex_GenesisConsistency(t *testing.T) {
 	}
 
 	txin := TxInput{[]byte{}, -1, nil, []byte(GenesisCoinbaseData)}
-	txout := NewTxOutput(int64(GenesisReward*100000000), GenesisAdminAddress)
+	txout, _ := NewTxOutput(int64(GenesisReward*100000000), GenesisAdminAddress)
 	txout.PubKeyHash = pubKeyHash
 	genesisTX := &Transaction{
 		ID:        []byte("SOLE_GENESIS_TX_ID"),
@@ -283,7 +296,10 @@ func TestReindex_GenesisConsistency(t *testing.T) {
 	}
 
 	// FindSpendableOutputs must resolve genesis admin's output at index 0.
-	_, spendable := utxoSet.FindSpendableOutputs(pubKeyHash, 1)
+	_, spendable, errSpend := utxoSet.FindSpendableOutputs(pubKeyHash, 1)
+	if errSpend != nil {
+		t.Fatalf("FAIL: FindSpendableOutputs(GenesisAdmin) returned error: %v", errSpend)
+	}
 	indices, ok := spendable[genesisTXIDHex]
 	if !ok {
 		t.Errorf("FAIL: FindSpendableOutputs(GenesisAdmin) returned no outputs for genesis TX")

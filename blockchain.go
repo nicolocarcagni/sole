@@ -19,6 +19,12 @@ const (
 	dbPath = "./data/blocks"
 )
 
+var (
+	ErrBlockchainNotFound = errors.New("blockchain database does not exist")
+	ErrBlockchainExists   = errors.New("blockchain database already exists")
+	ErrBlockNotFound      = errors.New("block not found")
+)
+
 func getBadgerOptions(path string) badger.Options {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil
@@ -57,7 +63,7 @@ func InitBlockchain() (*Blockchain, error) {
 	var lastHash []byte
 
 	if DBExists() {
-		return nil, fmt.Errorf("blockchain already exists")
+		return nil, ErrBlockchainExists
 	}
 
 	// Ensure data directory exists
@@ -69,14 +75,21 @@ func InitBlockchain() (*Blockchain, error) {
 
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	err = db.Update(func(txn *badger.Txn) error {
-		genesis := NewGenesisBlock()
+		genesis, err := NewGenesisBlock()
+		if err != nil {
+			return err
+		}
 		fmt.Println("🌟 Genesis Block created")
 
-		err = txn.Set(genesis.Hash, genesis.Serialize())
+		serialized, err := genesis.Serialize()
+		if err != nil {
+			return err
+		}
+		err = txn.Set(genesis.Hash, serialized)
 		if err != nil {
 			return fmt.Errorf("failed to save genesis block: %w", err)
 		}
@@ -101,10 +114,9 @@ func InitBlockchain() (*Blockchain, error) {
 	return &blockchain, nil
 }
 
-func ContinueBlockchain(address string) *Blockchain {
+func ContinueBlockchain(address string) (*Blockchain, error) {
 	if !DBExists() {
-		fmt.Println("No existing blockchain found. Create one first.")
-		os.Exit(1)
+		return nil, ErrBlockchainNotFound
 	}
 
 	var lastHash []byte
@@ -113,7 +125,7 @@ func ContinueBlockchain(address string) *Blockchain {
 
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Fatalf("Fatal: Failed to open blockchain database: %v\n", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	err = db.Update(func(txn *badger.Txn) error {
@@ -125,17 +137,16 @@ func ContinueBlockchain(address string) *Blockchain {
 		return err
 	})
 	if err != nil {
-		log.Fatalf("Fatal: Failed to retrieve last block hash: %v\n", err)
+		return nil, fmt.Errorf("failed to retrieve last block hash: %w", err)
 	}
 
 	chain := Blockchain{lastHash, db, sync.Mutex{}}
-	return &chain
+	return &chain, nil
 }
 
-func ContinueBlockchainReadOnly(address string) *Blockchain {
+func ContinueBlockchainReadOnly(address string) (*Blockchain, error) {
 	if !DBExists() {
-		fmt.Println("No existing blockchain found. Create one first.")
-		os.Exit(1)
+		return nil, ErrBlockchainNotFound
 	}
 
 	var lastHash []byte
@@ -145,7 +156,7 @@ func ContinueBlockchainReadOnly(address string) *Blockchain {
 
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Fatalf("Fatal: Failed to open blockchain database in Read-Only mode: %v\n", err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	err = db.View(func(txn *badger.Txn) error {
@@ -157,16 +168,16 @@ func ContinueBlockchainReadOnly(address string) *Blockchain {
 		return err
 	})
 	if err != nil {
-		log.Fatalf("Fatal: Failed to retrieve last block hash (Read-Only): %v\n", err)
+		return nil, fmt.Errorf("failed to retrieve last block hash (Read-Only): %w", err)
 	}
 
 	chain := Blockchain{lastHash, db, sync.Mutex{}}
-	return &chain
+	return &chain, nil
 }
 
-func ContinueBlockchainSnapshot(customPath string) *Blockchain {
+func ContinueBlockchainSnapshot(customPath string) (*Blockchain, error) {
 	if _, err := os.Stat(customPath + "/MANIFEST"); os.IsNotExist(err) {
-		log.Panic("Snapshot DB corrupt or missing")
+		return nil, fmt.Errorf("snapshot DB corrupt or missing: %w", err)
 	}
 
 	var lastHash []byte
@@ -180,23 +191,23 @@ func ContinueBlockchainSnapshot(customPath string) *Blockchain {
 
 	db, err := badger.Open(opts)
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
 
 	err = db.Update(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte("lh"))
 		if err != nil {
-			log.Panic(err)
+			return err
 		}
 		lastHash, err = item.ValueCopy(nil)
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to retrieve last block hash: %w", err)
 	}
 
 	chain := Blockchain{lastHash, db, sync.Mutex{}}
-	return &chain
+	return &chain, nil
 }
 
 func (chain *Blockchain) GetBlock(blockHash []byte) (Block, error) {
@@ -222,7 +233,10 @@ func (chain *Blockchain) GetBlockHashes() [][]byte {
 	iter := chain.Iterator()
 
 	for {
-		block := iter.Next()
+		block, err := iter.Next()
+		if err != nil {
+			break
+		}
 		blocks = append(blocks, block.Hash)
 
 		if len(block.PrevBlockHash) == 0 {
@@ -267,7 +281,7 @@ func (chain *Blockchain) GetBestHeight() int {
 	return lastBlock.Height
 }
 
-func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.PrivateKey) *Block {
+func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.PrivateKey) (*Block, error) {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
@@ -282,7 +296,7 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 		return err
 	})
 	if err != nil {
-		log.Fatalf("Fatal: Failed to retrieve last hash during forgery: %v", err)
+		return nil, fmt.Errorf("failed to retrieve last hash during forgery: %w", err)
 	}
 
 	var lastBlockData []byte
@@ -295,7 +309,7 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 		return err
 	})
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to retrieve last block data: %w", err)
 	}
 
 	lastBlock := DeserializeBlock(lastBlockData)
@@ -318,32 +332,39 @@ func (chain *Blockchain) ForgeBlock(transactions []*Transaction, privKey ecdsa.P
 	// block.Hash == block.CalculateHash() before signing.
 	err = SignBlock(newBlock, privKey)
 	if err != nil {
-		log.Panic("Failed to sign block:", err)
+		return nil, fmt.Errorf("failed to sign block: %w", err)
 	}
 
 	err = chain.Database.Update(func(txn *badger.Txn) error {
-		err := txn.Set(newBlock.Hash, newBlock.Serialize())
+		serialized, err := newBlock.Serialize()
 		if err != nil {
-			log.Panic(err)
+			return err
+		}
+		err = txn.Set(newBlock.Hash, serialized)
+		if err != nil {
+			return err
 		}
 
 		// [OPTIMIZATION] Index transactions for O(1) lookup
 		for _, tx := range newBlock.Transactions {
 			err = txn.Set(append([]byte("tx-"), tx.ID...), newBlock.Hash)
 			if err != nil {
-				log.Panic(err)
+				return err
 			}
 		}
 
 		err = txn.Set([]byte("lh"), newBlock.Hash)
+		if err != nil {
+			return err
+		}
 		chain.LastHash = newBlock.Hash
-		return err
+		return nil
 	})
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to update database during forgery: %w", err)
 	}
 
-	return newBlock
+	return newBlock, nil
 }
 
 func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transaction) bool {
@@ -410,8 +431,11 @@ func (chain *Blockchain) AddBlock(block *Block, txCache ...map[string]Transactio
 			return nil
 		}
 
-		blockData := block.Serialize()
-		err := txn.Set(block.Hash, blockData)
+		blockData, err := block.Serialize()
+		if err != nil {
+			return err
+		}
+		err = txn.Set(block.Hash, blockData)
 		if err != nil {
 			return err
 		}
@@ -483,7 +507,10 @@ func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
 	iter := bc.Iterator()
 
 	for {
-		block := iter.Next()
+		block, err := iter.Next()
+		if err != nil {
+			break
+		}
 
 		for _, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
@@ -529,7 +556,10 @@ func (bc *Blockchain) FindTransactions(address string) []Transaction {
 	iter := bc.Iterator()
 
 	for {
-		block := iter.Next()
+		block, err := iter.Next()
+		if err != nil {
+			break
+		}
 
 		for _, tx := range block.Transactions {
 			if tx.IsCoinbase() {
@@ -582,7 +612,10 @@ func (chain *Blockchain) FindUTXO() map[string]map[int]TxOutput {
 	iter := chain.Iterator()
 
 	for {
-		block := iter.Next()
+		block, err := iter.Next()
+		if err != nil {
+			break
+		}
 
 		for _, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
@@ -671,7 +704,10 @@ func (chain *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 	// 2. Fallback to O(N) iteration (for legacy compatibility if DB not reset)
 	iter := chain.Iterator()
 	for {
-		block := iter.Next()
+		block, err := iter.Next()
+		if err != nil {
+			break
+		}
 
 		for _, tx := range block.Transactions {
 			if bytes.Equal(tx.ID, ID) {
@@ -688,7 +724,7 @@ func (chain *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 }
 
 // SignTransaction signs inputs of a Transaction
-func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey) {
+func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey) error {
 	prevTXs := make(map[string]Transaction)
 
 	for _, vin := range tx.Vin {
@@ -696,12 +732,12 @@ func (chain *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateK
 		if err != nil {
 			// [SECURITY FIX] Do not panic on invalid TxID, prevent DoS.
 			fmt.Printf("⚠️  [SignTransaction] Skipped: Previous transaction not found (%x)\n", vin.Txid)
-			return
+			return err
 		}
 		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
 	}
 
-	tx.Sign(privKey, prevTXs)
+	return tx.Sign(privKey, prevTXs)
 }
 
 // VerifyTransaction verifies transaction input signatures (DB-only lookup)
@@ -827,26 +863,31 @@ func (chain *Blockchain) Iterator() *BlockchainIterator {
 }
 
 // Next returns the next block from the iterator
-func (i *BlockchainIterator) Next() *Block {
+func (i *BlockchainIterator) Next() (*Block, error) {
 	var block *Block
 
 	err := i.Database.View(func(txn *badger.Txn) error {
 		item, err := txn.Get(i.CurrentHash)
 		if err != nil {
-			log.Panic(err)
+			return err
 		}
 		encodedBlock, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
 		block = DeserializeBlock(encodedBlock)
-		return err
+		return nil
 	})
 
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to get block from iterator: %w", err)
 	}
 
-	i.CurrentHash = block.PrevBlockHash
+	if block != nil {
+		i.CurrentHash = block.PrevBlockHash
+	}
 
-	return block
+	return block, nil
 }
 
 // DeserializeBlock deserializes a block

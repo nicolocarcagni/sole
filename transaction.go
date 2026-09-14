@@ -11,9 +11,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
-	"os"
 	"time"
 )
 
@@ -28,12 +26,13 @@ type TxOutput struct {
 	PubKeyHash []byte
 }
 
-func (out *TxOutput) Lock(address []byte) {
+func (out *TxOutput) Lock(address []byte) error {
 	pubKeyHash, err := ExtractPubKeyHash(string(address))
 	if err != nil {
-		log.Panic(err)
+		return err
 	}
 	out.PubKeyHash = pubKeyHash
+	return nil
 }
 
 func (out *TxOutput) IsLockedWithKey(pubKeyHash []byte) bool {
@@ -44,34 +43,37 @@ func (out *TxOutput) IsOPReturn() bool {
 	return out.Value == 0
 }
 
-func NewTxOutput(value int64, address string) *TxOutput {
+func NewTxOutput(value int64, address string) (*TxOutput, error) {
 	txo := &TxOutput{value, nil}
-	txo.Lock([]byte(address))
-	return txo
+	err := txo.Lock([]byte(address))
+	if err != nil {
+		return nil, err
+	}
+	return txo, nil
 }
 
 type TxOutputs struct {
 	Outputs []TxOutput
 }
 
-func (outs TxOutputs) Serialize() []byte {
+func (outs TxOutputs) Serialize() ([]byte, error) {
 	var buff bytes.Buffer
 	enc := gob.NewEncoder(&buff)
 	err := enc.Encode(outs)
 	if err != nil {
-		log.Fatalf("Fatal: Serialization failed: %v", err)
+		return nil, fmt.Errorf("serialization failed: %w", err)
 	}
-	return buff.Bytes()
+	return buff.Bytes(), nil
 }
 
-func DeserializeOutputs(data []byte) TxOutputs {
+func DeserializeOutputs(data []byte) (TxOutputs, error) {
 	var outputs TxOutputs
 	dec := gob.NewDecoder(bytes.NewReader(data))
 	err := dec.Decode(&outputs)
 	if err != nil {
-		log.Fatalf("Fatal: Deserialization failed: %v", err)
+		return outputs, fmt.Errorf("deserialization failed: %w", err)
 	}
-	return outputs
+	return outputs, nil
 }
 
 type TxInput struct {
@@ -262,15 +264,14 @@ func (tx Transaction) SerializeForHash() []byte {
 	return encoded.Bytes()
 }
 
-func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transaction) {
+func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transaction) error {
 	if tx.IsCoinbase() {
-		return
+		return nil
 	}
 
 	for _, vin := range tx.Vin {
 		if prevTXs[hex.EncodeToString(vin.Txid)].ID == nil {
-			fmt.Printf("⚠️  [Sign] Skipped input: Previous transaction %x not found in context.\n", vin.Txid)
-			return // Cannot sign if input tx is missing
+			return fmt.Errorf("skipped input: previous transaction %x not found in context", vin.Txid)
 		}
 	}
 
@@ -285,7 +286,7 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 
 		r, s, err := ecdsa.Sign(rand.Reader, &privKey, txCopy.ID)
 		if err != nil {
-			log.Fatalf("Fatal: ECDSA signing failed: %v", err)
+			return fmt.Errorf("ECDSA signing failed: %w", err)
 		}
 
 		curveOrder := privKey.Curve.Params().N
@@ -304,6 +305,7 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 	}
 
 	tx.ID = tx.Hash()
+	return nil
 }
 
 func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
@@ -404,49 +406,52 @@ func (tx Transaction) IsCoinbase() bool {
 	return len(tx.Vin) == 1 && len(tx.Vin[0].Txid) == 0 && tx.Vin[0].Vout == -1
 }
 
-func NewCoinbaseTX(to, data string, amount int64) *Transaction {
+func NewCoinbaseTX(to, data string, amount int64) (*Transaction, error) {
 	if data == "" {
 		data = fmt.Sprintf("Reward to '%s'", to)
 	}
 
 	txin := TxInput{[]byte{}, -1, nil, []byte(data)}
-	txout := NewTxOutput(amount, to)
+	txout, err := NewTxOutput(amount, to)
+	if err != nil {
+		return nil, err
+	}
 	tx := Transaction{nil, []TxInput{txin}, []TxOutput{*txout}, time.Now().Unix()}
 	tx.ID = tx.Hash()
 
-	return &tx
+	return &tx, nil
 }
 
-func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet) *Transaction {
+func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet) (*Transaction, error) {
 	var inputs []TxInput
 	var outputs []TxOutput
 
 	wallets, err := CreateWallets()
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to create wallets: %w", err)
 	}
 	wallet := wallets.GetWalletRef(from)
 	if wallet == nil {
-		fmt.Printf("⛔ ERRORE: Wallet non trovato per l'indirizzo mittente %s. Assicurati di avere il file wallet.dat corretto.\n", from)
-		os.Exit(1)
+		return nil, fmt.Errorf("invalid sender address %q: wallet not found", from)
 	}
 	pubKeyHash := HashPubKey(wallet.PublicKey)
 
 	// We need enough to cover both the amount and the fee
 	totalRequired := amount + fee
 
-	acc, validOutputs := utxoSet.FindSpendableOutputs(pubKeyHash, totalRequired)
+	acc, validOutputs, err := utxoSet.FindSpendableOutputs(pubKeyHash, totalRequired)
+	if err != nil {
+		return nil, fmt.Errorf("failed to find spendable outputs: %w", err)
+	}
 
 	if acc < totalRequired {
-		fmt.Printf("⛔ ERRORE: Fondi insufficienti. Disponibili: %d, Richiesti: %d (Importo: %d + Fee: %d)\n", acc, totalRequired, amount, fee)
-		os.Exit(1)
-		// return nil // unreachable
+		return nil, fmt.Errorf("insufficient funds: available %d, required %d", acc, totalRequired)
 	}
 
 	for txid, outs := range validOutputs {
 		txID, err := hex.DecodeString(txid)
 		if err != nil {
-			log.Panic(err)
+			return nil, fmt.Errorf("failed to decode txid %s: %w", txid, err)
 		}
 
 		for _, out := range outs {
@@ -464,20 +469,30 @@ func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, u
 	}
 
 	// The primary destination output
-	outputs = append(outputs, *NewTxOutput(amount, to))
+	outDest, err := NewTxOutput(amount, to)
+	if err != nil {
+		return nil, fmt.Errorf("invalid destination address %q: %w", to, err)
+	}
+	outputs = append(outputs, *outDest)
 
 	// The change output (returned to sender)
 	if acc > totalRequired {
-		outputs = append(outputs, *NewTxOutput(acc-totalRequired, from))
+		outChange, err := NewTxOutput(acc-totalRequired, from)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create change output: %w", err)
+		}
+		outputs = append(outputs, *outChange)
 	}
 
 	tx := Transaction{nil, inputs, outputs, time.Now().Unix()}
 	privKey, err := wallet.GetPrivateKey()
 	if err != nil {
-		fmt.Printf("⛔ ERROR: Failed to get private key for %s: %v\n", from, err)
-		os.Exit(1)
+		return nil, fmt.Errorf("failed to retrieve private key for %s: %w", from, err)
 	}
-	utxoSet.Blockchain.SignTransaction(&tx, privKey)
+	err = utxoSet.Blockchain.SignTransaction(&tx, privKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign transaction: %w", err)
+	}
 
-	return &tx
+	return &tx, nil
 }

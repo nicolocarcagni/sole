@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"fmt"
 )
 
 const (
@@ -11,16 +11,19 @@ const (
 	GenesisReward       = 5000000
 )
 
-func NewGenesisBlock() *Block {
+func NewGenesisBlock() (*Block, error) {
 	// Deserialize address
 	pubKeyHash, err := ExtractPubKeyHash(GenesisAdminAddress)
 	if err != nil {
-		log.Panic("Invalid Genesis Admin Address:", err)
+		return nil, fmt.Errorf("invalid genesis admin address: %w", err)
 	}
 
 	// Create Coinbase Transaction manually
 	txin := TxInput{[]byte{}, -1, nil, []byte(GenesisCoinbaseData)}
-	txout := NewTxOutput(int64(GenesisReward*100000000), GenesisAdminAddress) // 5M * 10^8
+	txout, err := NewTxOutput(int64(GenesisReward*100000000), GenesisAdminAddress) // 5M * 10^8
+	if err != nil {
+		return nil, fmt.Errorf("failed to create genesis output: %w", err)
+	}
 	txout.PubKeyHash = pubKeyHash
 	coinbase := &Transaction{[]byte("SOLE_GENESIS_TX_ID"), []TxInput{txin}, []TxOutput{*txout}, int64(GenesisTimestamp)}
 
@@ -40,5 +43,5 @@ func NewGenesisBlock() *Block {
 		Signature:     []byte{}, // No signature for genesis or empty
 	}
 	MineBlock(block)
-	return block
+	return block, nil
 }

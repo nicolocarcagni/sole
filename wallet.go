@@ -8,7 +8,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"errors"
-	"log"
+	"fmt"
 	"math/big"
 	"strings"
 
@@ -63,18 +63,18 @@ func MakeWalletFromMnemonic(mnemonic string) (*Wallet, error) {
 	return &Wallet{encodedPrivate, pubKey}, nil
 }
 
-func NewWallet() (*Wallet, string) {
+func NewWallet() (*Wallet, string, error) {
 	mnemonic, err := NewMnemonic()
 	if err != nil {
-		log.Panic(err)
+		return nil, "", fmt.Errorf("failed to generate mnemonic: %w", err)
 	}
 
 	wallet, err := MakeWalletFromMnemonic(mnemonic)
 	if err != nil {
-		log.Panic(err)
+		return nil, "", fmt.Errorf("failed to make wallet from mnemonic: %w", err)
 	}
 
-	return wallet, mnemonic
+	return wallet, mnemonic, nil
 }
 
 func MakeWalletFromPrivKeyHex(privKeyHex string) (*Wallet, error) {
@@ -124,10 +124,7 @@ func HashPubKey(pubKey []byte) []byte {
 	publicSHA256 := sha256.Sum256(pubKey)
 
 	RIPEMD160Hasher := ripemd160.New()
-	_, err := RIPEMD160Hasher.Write(publicSHA256[:])
-	if err != nil {
-		log.Panic(err)
-	}
+	_, _ = RIPEMD160Hasher.Write(publicSHA256[:])
 	publicRIPEMD160 := RIPEMD160Hasher.Sum(nil)
 
 	return publicRIPEMD160

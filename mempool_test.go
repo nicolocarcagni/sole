@@ -84,7 +84,12 @@ func TestHandleTx_RejectsFakeSignature(t *testing.T) {
 	// Persist the parent UTXO so CalculateFee finds it.
 	parentKey := fmt.Sprintf("%s%s-%d", utxoPrefix, hex.EncodeToString(parentTxID), 0)
 	chain.Database.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(parentKey), SerializeUTXO(parentTx.Vout[0]))
+
+		serialized, err := SerializeUTXO(parentTx.Vout[0])
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte(parentKey), serialized)
 	})
 	// Index the parent tx so VerifyTransactionWithMempool can look it up.
 	genesisBlock := makeMinedBlock(t, []*Transaction{parentTx}, []byte{}, 0)
@@ -380,7 +385,12 @@ func TestHandleTx_RejectsWhenMempoolFull(t *testing.T) {
 	}
 	parentKey := fmt.Sprintf("%s%s-%d", utxoPrefix, hex.EncodeToString(parentTxID), 0)
 	chain.Database.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(parentKey), SerializeUTXO(parentTx.Vout[0]))
+
+		serialized, err := SerializeUTXO(parentTx.Vout[0])
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte(parentKey), serialized)
 	})
 	genesisBlock := makeMinedBlock(t, []*Transaction{parentTx}, []byte{}, 0)
 	chain.LastHash = genesisBlock.Hash

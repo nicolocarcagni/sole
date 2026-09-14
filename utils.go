@@ -1,10 +1,9 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
-	"log"
 	"os"
 )
 
@@ -14,7 +13,7 @@ func ExtractPubKeyHash(address string) ([]byte, error) {
 		return nil, err
 	}
 	if len(pubKeyHash) < 5 {
-		return nil, log.Output(2, "Invalid address length")
+		return nil, fmt.Errorf("invalid address length")
 	}
 	return pubKeyHash[1 : len(pubKeyHash)-4], nil
 }
@@ -27,12 +26,9 @@ func AddressFromPubKeyHash(pubKeyHash []byte) string {
 }
 
 func IntToHex(num int64) []byte {
-	buff := new(bytes.Buffer)
-	err := binary.Write(buff, binary.BigEndian, num)
-	if err != nil {
-		log.Panic(err)
-	}
-	return buff.Bytes()
+	var b [8]byte
+	binary.BigEndian.PutUint64(b[:], uint64(num))
+	return b[:]
 }
 
 func CopyDir(src string, dst string) error {

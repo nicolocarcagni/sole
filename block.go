@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/gob"
-	"log"
+	"fmt"
 	"time"
 )
 
@@ -19,16 +19,16 @@ type Block struct {
 	Signature     []byte // ECDSA signature of the block hash (64 bytes)
 }
 
-func (b *Block) Serialize() []byte {
+func (b *Block) Serialize() ([]byte, error) {
 	var result bytes.Buffer
 	encoder := gob.NewEncoder(&result)
 
 	err := encoder.Encode(b)
 	if err != nil {
-		log.Panic(err)
+		return nil, fmt.Errorf("failed to serialize block: %w", err)
 	}
 
-	return result.Bytes()
+	return result.Bytes(), nil
 }
 
 // CalculateHash computes the deterministic SHA-256 digest of the block header
