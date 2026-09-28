@@ -150,7 +150,7 @@ func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, u
 		}
 
 		for _, out := range outs {
-			input := core.TxInput{txID, out, nil, w.PublicKey}
+			input := core.TxInput{Txid: txID, Vout: out, Signature: nil, PubKey: w.PublicKey}
 			inputs = append(inputs, input)
 		}
 	}
@@ -159,7 +159,7 @@ func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, u
 		if len(memo) > 80 {
 			memo = memo[:80]
 		}
-		outputs = append(outputs, core.TxOutput{0, []byte(memo)})
+		outputs = append(outputs, core.TxOutput{Value: 0, PubKeyHash: []byte(memo)})
 	}
 
 	outDest, err := core.NewTxOutput(amount, to)
@@ -176,7 +176,7 @@ func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, u
 		outputs = append(outputs, *outChange)
 	}
 
-	tx := core.Transaction{nil, inputs, outputs, time.Now().Unix()}
+	tx := core.Transaction{ID: nil, Vin: inputs, Vout: outputs, Timestamp: time.Now().Unix()}
 	privKey, err := w.GetPrivateKey()
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve private key for %s: %w", from, err)

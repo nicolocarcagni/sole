@@ -261,7 +261,7 @@ func TestReindex_GenesisConsistency(t *testing.T) {
 		t.Fatalf("core.ExtractPubKeyHash(core.GenesisAdminAddress): %v", err)
 	}
 
-	txin := core.TxInput{[]byte{}, -1, nil, []byte(core.GenesisCoinbaseData)}
+	txin := core.TxInput{Txid: []byte{}, Vout: -1, Signature: nil, PubKey: []byte(core.GenesisCoinbaseData)}
 	txout, _ := core.NewTxOutput(int64(core.GenesisReward*100000000), core.GenesisAdminAddress)
 	txout.PubKeyHash = pubKeyHash
 	genesisTX := &core.Transaction{

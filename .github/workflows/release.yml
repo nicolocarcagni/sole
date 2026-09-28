@@ -48,9 +48,9 @@ jobs:
           CGO_ENABLED: 0
         run: |
           if [[ "${{ matrix.goos }}" == "windows" ]]; then
-            go build -ldflags="-s -w" -o sole-cli.exe .
+            go build -ldflags="-s -w" -o sole-cli.exe ./cmd/sole-cli
           else
-            go build -ldflags="-s -w" -o sole-cli .
+            go build -ldflags="-s -w" -o sole-cli ./cmd/sole-cli
           fi
 
       - name: Package Release

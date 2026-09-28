@@ -12,13 +12,13 @@ func NewGenesisBlock() (*core.Block, error) {
 		return nil, fmt.Errorf("invalid genesis admin address: %w", err)
 	}
 
-	txin := core.TxInput{[]byte{}, -1, nil, []byte(core.GenesisCoinbaseData)}
+	txin := core.TxInput{Txid: []byte{}, Vout: -1, Signature: nil, PubKey: []byte(core.GenesisCoinbaseData)}
 	txout, err := core.NewTxOutput(int64(core.GenesisReward*100000000), core.GenesisAdminAddress) 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create genesis output: %w", err)
 	}
 	txout.PubKeyHash = pubKeyHash
-	coinbase := &core.Transaction{[]byte("SOLE_GENESIS_TX_ID"), []core.TxInput{txin}, []core.TxOutput{*txout}, int64(core.GenesisTimestamp)}
+	coinbase := &core.Transaction{ID: []byte("SOLE_GENESIS_TX_ID"), Vin: []core.TxInput{txin}, Vout: []core.TxOutput{*txout}, Timestamp: int64(core.GenesisTimestamp)}
 
 	block := &core.Block{
 		Timestamp:     int64(core.GenesisTimestamp),
