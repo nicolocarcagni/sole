@@ -13,8 +13,8 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 
-	"github.com/nicolocarcagni/sole/pkg/core"
 	"github.com/nicolocarcagni/sole/pkg/consensus"
+	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
 const (
@@ -891,7 +891,6 @@ func (i *BlockchainIterator) Next() (*core.Block, error) {
 
 	return block, nil
 }
-
 
 func DBExists() bool {
 	if _, err := os.Stat(DbFile + "/MANIFEST"); os.IsNotExist(err) {

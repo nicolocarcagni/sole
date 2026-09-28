@@ -17,8 +17,7 @@ import (
 	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
-const (
-)
+const ()
 
 type Wallet struct {
 	PrivateKey []byte // x509 Marshaled
@@ -119,7 +118,6 @@ func (w Wallet) GetPrivateKey() (ecdsa.PrivateKey, error) {
 	}
 	return *key, nil
 }
-
 
 func ValidateAddress(address string) bool {
 	pubKeyHash, err := core.Base58Decode([]byte(address))

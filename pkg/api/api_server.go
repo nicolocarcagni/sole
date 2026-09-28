@@ -12,16 +12,16 @@ import (
 	"github.com/dgraph-io/badger/v3"
 	"github.com/gorilla/mux"
 
-	"github.com/nicolocarcagni/sole/pkg/core"
-	"github.com/nicolocarcagni/sole/pkg/wallet"
 	"github.com/nicolocarcagni/sole/pkg/consensus"
+	"github.com/nicolocarcagni/sole/pkg/core"
 	"github.com/nicolocarcagni/sole/pkg/p2p"
+	"github.com/nicolocarcagni/sole/pkg/wallet"
 )
 
 type RestServer struct {
-	P2P *p2p.Server
+	P2P        *p2p.Server
 	MempoolHub *EventHub
-	BlockHub *EventHub
+	BlockHub   *EventHub
 }
 
 func StartRestServer(server *p2p.Server, listenHost string, port int) {
@@ -107,10 +107,10 @@ type ErrorResponse struct {
 }
 
 type MerkleProofResponse struct {
-	TxID        string       `json:"txid"`
-	BlockHash   string       `json:"block_hash"`
-	BlockHeight int          `json:"block_height"`
-	MerkleRoot  string       `json:"merkle_root"`
+	TxID        string            `json:"txid"`
+	BlockHash   string            `json:"block_hash"`
+	BlockHeight int               `json:"block_height"`
+	MerkleRoot  string            `json:"merkle_root"`
 	Proof       []core.MerkleStep `json:"proof"`
 }
 

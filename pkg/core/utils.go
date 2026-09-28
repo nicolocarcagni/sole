@@ -2,9 +2,9 @@ package core
 
 import (
 	"crypto/sha256"
-	"golang.org/x/crypto/ripemd160"
 	"encoding/binary"
 	"fmt"
+	"golang.org/x/crypto/ripemd160"
 	"io"
 	"os"
 )
@@ -81,4 +81,5 @@ func HashPubKey(pubKey []byte) []byte {
 
 	return publicRIPEMD160
 }
+
 const version = byte(0x00)

@@ -9,8 +9,8 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 
-	"github.com/nicolocarcagni/sole/pkg/core"
 	"github.com/nicolocarcagni/sole/pkg/consensus"
+	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
 // ---------------------------------------------------------------------------

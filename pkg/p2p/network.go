@@ -27,7 +27,6 @@ import (
 
 	"github.com/nicolocarcagni/sole/pkg/core"
 	"github.com/nicolocarcagni/sole/pkg/storage"
-	
 )
 
 const (
@@ -46,10 +45,9 @@ var (
 	}
 )
 
-
 type Server struct {
-	OnNewTx func(*core.Transaction)
-	OnNewBlock func(*core.Block)
+	OnNewTx          func(*core.Transaction)
+	OnNewBlock       func(*core.Block)
 	Host             host.Host
 	Blockchain       *storage.Blockchain
 	UTXOSet          *storage.UTXOSet
@@ -60,11 +58,10 @@ type Server struct {
 	Mempool          map[string]core.MempoolItem
 	MempoolMux       sync.Mutex
 
-
-	SyncingFrom    peer.ID        // Peer we are currently syncing from
-	IsSyncing      bool           // True while IBD is in progress
+	SyncingFrom    peer.ID             // Peer we are currently syncing from
+	IsSyncing      bool                // True while IBD is in progress
 	BlockBuffer    map[int]*core.Block // Height → core.Block buffer for ordered application
-	ExpectedBlocks int            // Total blocks expected during IBD
+	ExpectedBlocks int                 // Total blocks expected during IBD
 	BlockBufferMux sync.Mutex
 }
 
@@ -208,7 +205,6 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to continue blockchain: %w", err)
 	}
 	utxoSet := &storage.UTXOSet{Blockchain: chain}
-
 
 	server := &Server{
 		Host:             h,
@@ -575,7 +571,9 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 		if s.Blockchain.AddBlock(block) {
 			s.UTXOSet.Update(block)
 			fmt.Printf("✅ core.Block added %x and UTXO set updated.\n", block.Hash)
-			if s.OnNewBlock != nil { s.OnNewBlock(block) }
+			if s.OnNewBlock != nil {
+				s.OnNewBlock(block)
+			}
 		} else {
 			fmt.Printf("core.Block discarded or duplicate: %x\n", block.Hash)
 		}
@@ -633,7 +631,9 @@ func (s *Server) applyBufferedBlocks() {
 	// Broadcast the tip block to WebSocket clients
 	if len(heights) > 0 {
 		if tipBlock := s.BlockBuffer[heights[len(heights)-1]]; tipBlock != nil {
-			if s.OnNewBlock != nil { s.OnNewBlock(tipBlock) }
+			if s.OnNewBlock != nil {
+				s.OnNewBlock(tipBlock)
+			}
 		}
 	}
 
@@ -736,7 +736,9 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	// ── 7. Admit & Relay ─────────────────────────────────────────────────────
 	fmt.Printf("New core.Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
 	s.Mempool[txID] = core.MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
-	if s.OnNewTx != nil { s.OnNewTx(&tx) }
+	if s.OnNewTx != nil {
+		s.OnNewTx(&tx)
+	}
 
 	peers := s.Host.Network().Peers()
 	for _, p := range peers {
@@ -891,7 +893,9 @@ func (s *Server) AttemptMine() {
 		fmt.Printf("⚠️ storage.UTXOSet update failed: %v\n", err)
 		return
 	}
-	if s.OnNewBlock != nil { s.OnNewBlock(newBlock) }
+	if s.OnNewBlock != nil {
+		s.OnNewBlock(newBlock)
+	}
 
 	// Selectively evict only the transactions that were included in the new block.
 	// Legitimate unconfirmed transactions that were not included (e.g. arrived

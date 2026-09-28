@@ -1,9 +1,9 @@
 package core
 
 import (
-	"encoding/gob"
 	"bytes"
 	"crypto/sha256"
+	"encoding/gob"
 	"fmt"
 	"time"
 )

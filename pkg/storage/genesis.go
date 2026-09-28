@@ -13,7 +13,7 @@ func NewGenesisBlock() (*core.Block, error) {
 	}
 
 	txin := core.TxInput{Txid: []byte{}, Vout: -1, Signature: nil, PubKey: []byte(core.GenesisCoinbaseData)}
-	txout, err := core.NewTxOutput(int64(core.GenesisReward*100000000), core.GenesisAdminAddress) 
+	txout, err := core.NewTxOutput(int64(core.GenesisReward*100000000), core.GenesisAdminAddress)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create genesis output: %w", err)
 	}
@@ -27,7 +27,7 @@ func NewGenesisBlock() (*core.Block, error) {
 		Hash:          []byte{},
 		Height:        0,
 		Validator:     []byte("Genesis"),
-		Signature:     []byte{}, 
+		Signature:     []byte{},
 	}
 	consensus.MineBlock(block)
 	return block, nil

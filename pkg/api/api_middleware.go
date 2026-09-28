@@ -11,8 +11,7 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
-
-	)
+)
 
 type IPRateLimiter struct {
 	ips map[string]*rate.Limiter

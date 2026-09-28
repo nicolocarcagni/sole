@@ -1,8 +1,6 @@
 package core
 
-import (
-
-)
+import ()
 
 const (
 	GenesisTimestamp    = 1768947120
@@ -10,4 +8,3 @@ const (
 	GenesisAdminAddress = "1HSYNy8yXUuUZrkBCnzSc34Lqr8soPAKQL"
 	GenesisReward       = 5000000
 )
-

@@ -1,13 +1,13 @@
 package storage
 
 import (
-	"fmt"
-	"time"
 	"encoding/hex"
+	"fmt"
 	"math"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nicolocarcagni/sole/pkg/core"
 	"github.com/nicolocarcagni/sole/pkg/wallet"

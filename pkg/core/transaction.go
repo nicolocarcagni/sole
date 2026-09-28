@@ -422,7 +422,6 @@ func NewCoinbaseTX(to, data string, amount int64) (*Transaction, error) {
 	return &tx, nil
 }
 
-
 type MempoolItem struct {
 	Tx      Transaction
 	AddedAt int64

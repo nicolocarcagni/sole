@@ -119,7 +119,6 @@ func VerifyBlockSignature(block *core.Block) bool {
 	return true
 }
 
-
 // --- PoA Hardening: Temporal Validation & Anti-Spam ---
 
 const (

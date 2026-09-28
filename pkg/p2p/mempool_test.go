@@ -1,14 +1,14 @@
 package p2p
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"github.com/dgraph-io/badger/v3"
-	"bytes"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"github.com/dgraph-io/badger/v3"
 	"sync"
 	"testing"
 	"time"
@@ -28,8 +28,7 @@ import (
 // so nil is safe for rejection-path tests.
 func makeMempoolServer(t *testing.T, chain *storage.Blockchain, utxo *storage.UTXOSet) *Server {
 	t.Helper()
-	
-	
+
 	return &Server{
 		Host:       nil,
 		Blockchain: chain,
@@ -441,7 +440,7 @@ func newTestBlockchain(t *testing.T) *storage.Blockchain {
 	t.Cleanup(func() { db.Close() })
 
 	genesis := &core.Block{
-		Transactions: []*core.Transaction{},
+		Transactions:  []*core.Transaction{},
 		PrevBlockHash: []byte{},
 		Hash:          []byte("genesis"),
 		Height:        0,

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"testing"
 	"time"
-
 )
 
 // makeTestBlock returns a minimal valid block for testing purposes.
