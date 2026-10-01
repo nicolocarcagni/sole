@@ -1,7 +1,9 @@
 # Ignore compiled binaries
-sole
-sole-cli
-sole-cli.exe
+/sole
+/sole-cli
+/sole-cli.exe
+cmd/sole-cli/sole-cli
+cmd/sole-cli/sole-cli.exe
 *.exe
 *.dll
 *.so
