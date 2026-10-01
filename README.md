@@ -1,9 +1,8 @@
----
 ![Go Report](https://goreportcard.com/badge/github.com/nicolocarcagni/sole)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Status](https://img.shields.io/badge/status-active-success.svg)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/nicolocarcagni/sole)
----
+[![CI](https://github.com/nicolocarcagni/sole/actions/workflows/ci.yml/badge.svg)](https://github.com/nicolocarcagni/sole/actions/workflows/ci.yml)
 
 # SOLE Blockchain
 
@@ -22,13 +21,13 @@ The SOLE network operates as a Hybrid P2P Network, prioritizing high throughput 
 
 ## Prerequisites
 
-*   Go 1.19 or higher
+*   Go 1.22 or higher
 
 ## Quickstart
 
 ### Pre-Compiled Binaries
 
-You can ownload them directly from the Releases page.
+You can download them directly from the Releases page.
 
 ### Build the Node from Source
 
@@ -37,7 +36,7 @@ Clone the repository and compile the CLI executable manually:
 ```bash
 git clone https://github.com/nicolocarcagni/sole.git
 cd sole
-go build -o sole-cli .
+go build -o sole-cli ./cmd/sole-cli
 ```
 
 ### Run the Node
