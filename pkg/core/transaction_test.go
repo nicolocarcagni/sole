@@ -74,7 +74,10 @@ func TestTxIDPostSigningAndSerializationConsistency(t *testing.T) {
 
 	// 2. Serialize and Deserialize
 	serialized := tx.Serialize()
-	deserializedTx := DeserializeTransaction(serialized)
+	deserializedTx, err := DeserializeTransaction(serialized)
+	if err != nil {
+		t.Fatalf("deserialize signed transaction: %v", err)
+	}
 
 	// Assert bytes.Equal(tx.ID, deserializedTx.ID) is true
 	if !bytes.Equal(tx.ID, deserializedTx.ID) {
@@ -139,6 +142,54 @@ func TestTransactionIDCanonicalEncoding(t *testing.T) {
 	wantID := sha256.Sum256(wantEncoding)
 	if got := tx.Hash(); !bytes.Equal(got, wantID[:]) {
 		t.Fatalf("transaction ID does not hash the canonical encoding: got %x, want %x", got, wantID)
+	}
+}
+
+func TestDeserializeTransactionRejectsTruncatedFields(t *testing.T) {
+	tx := Transaction{
+		Vin:       []TxInput{{Txid: []byte{0x01}, Vout: 2}},
+		Vout:      []TxOutput{{Value: 7, PubKeyHash: []byte{0xff}}},
+		Timestamp: 9,
+	}
+	serialized := tx.Serialize()
+	for end := 0; end < len(serialized); end++ {
+		if _, err := DeserializeTransaction(serialized[:end]); err == nil {
+			t.Fatalf("truncated transaction with %d of %d bytes was accepted", end, len(serialized))
+		}
+	}
+}
+
+func TestDeserializeTransactionRejectsTrailingBytes(t *testing.T) {
+	tx := Transaction{
+		Vin:       []TxInput{{Txid: []byte{0x01}, Vout: 2}},
+		Vout:      []TxOutput{{Value: 7, PubKeyHash: []byte{0xff}}},
+		Timestamp: 9,
+	}
+	serialized := append(tx.Serialize(), 0x00)
+
+	_, err := DeserializeTransaction(serialized)
+	if err == nil {
+		t.Fatal("transaction with trailing bytes was accepted")
+	}
+}
+
+func TestDeserializeTransactionRoundTrip(t *testing.T) {
+	tx := Transaction{
+		Vin:       []TxInput{{Txid: []byte{0x01}, Vout: 2, Signature: []byte{0x03}, PubKey: []byte{0x04}}},
+		Vout:      []TxOutput{{Value: 7, PubKeyHash: []byte{0xff}}},
+		Timestamp: 9,
+	}
+	serialized := tx.Serialize()
+
+	decoded, err := DeserializeTransaction(serialized)
+	if err != nil {
+		t.Fatalf("deserialize transaction: %v", err)
+	}
+	if got := decoded.Serialize(); !bytes.Equal(got, serialized) {
+		t.Fatalf("transaction round trip changed serialized bytes: got %x, want %x", got, serialized)
+	}
+	if !bytes.Equal(decoded.ID, decoded.Hash()) {
+		t.Fatalf("decoded transaction ID does not match its canonical hash: got %x, want %x", decoded.ID, decoded.Hash())
 	}
 }
 
@@ -261,7 +312,10 @@ func TestMerkleRootPreservation(t *testing.T) {
 	var deserializedTXs []*Transaction
 	for _, tx := range transactions {
 		data := tx.Serialize()
-		deserializedTx := DeserializeTransaction(data)
+		deserializedTx, err := DeserializeTransaction(data)
+		if err != nil {
+			t.Fatalf("deserialize transaction: %v", err)
+		}
 		deserializedTXs = append(deserializedTXs, &deserializedTx)
 	}
 

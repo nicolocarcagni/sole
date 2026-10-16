@@ -124,69 +124,74 @@ func (tx Transaction) Serialize() []byte {
 	return encoded.Bytes()
 }
 
-func DeserializeTransaction(data []byte) Transaction {
+func DeserializeTransaction(data []byte) (Transaction, error) {
 	var tx Transaction
 	reader := bytes.NewReader(data)
 
-	// Helper for safe length reads
-	readLen := func() (int64, bool) {
+	readLen := func(field string) (int64, error) {
 		var v int64
 		if err := binary.Read(reader, binary.BigEndian, &v); err != nil {
-			return 0, false
+			return 0, fmt.Errorf("read %s length: %w", field, err)
 		}
 		if v < 0 || v > MaxFieldLen {
-			return 0, false
+			return 0, fmt.Errorf("invalid %s length %d", field, v)
 		}
-		return v, true
+		if v > int64(reader.Len()) {
+			return 0, fmt.Errorf("truncated %s: need %d bytes, have %d", field, v, reader.Len())
+		}
+		return v, nil
 	}
 
 	// Inputs
 	var inputsCount int64
 	if err := binary.Read(reader, binary.BigEndian, &inputsCount); err != nil {
-		return tx
+		return tx, fmt.Errorf("read input count: %w", err)
 	}
 	if inputsCount < 0 || inputsCount > MaxTxInputs {
-		return tx
+		return tx, fmt.Errorf("invalid input count %d", inputsCount)
 	}
 
 	for i := 0; i < int(inputsCount); i++ {
 		var vin TxInput
 
 		// TxID
-		l, ok := readLen()
-		if !ok {
-			return tx
+		l, err := readLen("transaction ID")
+		if err != nil {
+			return tx, err
 		}
-		vin.Txid = make([]byte, l)
+		vin.Txid = make([]byte, int(l))
 		if _, err := io.ReadFull(reader, vin.Txid); err != nil {
-			return tx
+			return tx, fmt.Errorf("read transaction ID: %w", err)
 		}
 
 		// Vout
 		var vout int64
 		if err := binary.Read(reader, binary.BigEndian, &vout); err != nil {
-			return tx
+			return tx, fmt.Errorf("read output index: %w", err)
+		}
+		if int64(int(vout)) != vout {
+			return tx, fmt.Errorf("output index %d overflows int", vout)
 		}
 		vin.Vout = int(vout)
 
 		// Signature
-		l, ok = readLen()
-		if !ok {
-			return tx
+		l, err = readLen("signature")
+		if err != nil {
+			return tx, err
 		}
-		vin.Signature = make([]byte, l)
+		vin.Signature = make([]byte, int(l))
 		if _, err := io.ReadFull(reader, vin.Signature); err != nil {
-			return tx
+			return tx, fmt.Errorf("read signature: %w", err)
 		}
 
 		// PubKey
-		l, ok = readLen()
-		if !ok {
-			return tx
+		l, err = readLen("public key")
+		if err != nil {
+			return tx, err
 		}
-		vin.PubKey = make([]byte, l)
+		vin.PubKey = make([]byte, int(l))
 		if _, err := io.ReadFull(reader, vin.PubKey); err != nil {
-			return tx
+			return tx, fmt.Errorf("read public key: %w", err)
 		}
 
 		tx.Vin = append(tx.Vin, vin)
@@ -195,39 +200,41 @@ func DeserializeTransaction(data []byte) Transaction {
 	// Outputs
 	var outputsCount int64
 	if err := binary.Read(reader, binary.BigEndian, &outputsCount); err != nil {
-		return tx
+		return tx, fmt.Errorf("read output count: %w", err)
 	}
 	if outputsCount < 0 || outputsCount > MaxTxOutputs {
-		return tx
+		return tx, fmt.Errorf("invalid output count %d", outputsCount)
 	}
 
 	for i := 0; i < int(outputsCount); i++ {
 		var vout TxOutput
 
 		if err := binary.Read(reader, binary.BigEndian, &vout.Value); err != nil {
-			return tx
+			return tx, fmt.Errorf("read output value: %w", err)
 		}
 
-		l, ok := readLen()
-		if !ok {
-			return tx
+		l, err := readLen("public key hash")
+		if err != nil {
+			return tx, err
 		}
-		vout.PubKeyHash = make([]byte, l)
+		vout.PubKeyHash = make([]byte, int(l))
 		if _, err := io.ReadFull(reader, vout.PubKeyHash); err != nil {
-			return tx
+			return tx, fmt.Errorf("read public key hash: %w", err)
 		}
 
 		tx.Vout = append(tx.Vout, vout)
 	}
 
-	// Timestamp
-	if reader.Len() > 0 {
-		binary.Read(reader, binary.BigEndian, &tx.Timestamp)
+	if err := binary.Read(reader, binary.BigEndian, &tx.Timestamp); err != nil {
+		return tx, fmt.Errorf("read timestamp: %w", err)
+	}
+	if reader.Len() != 0 {
+		return tx, fmt.Errorf("transaction has %d trailing bytes", reader.Len())
 	}
 
 	// Recalculate Hash (ID)
 	tx.ID = tx.Hash()
-	return tx
+	return tx, nil
 }
 
 func (tx *Transaction) Hash() []byte {

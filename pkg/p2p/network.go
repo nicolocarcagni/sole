@@ -658,7 +658,11 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 
 	txData := payload.Transaction
-	tx := core.DeserializeTransaction(txData)
+	tx, err := core.DeserializeTransaction(txData)
+	if err != nil {
+		log.Printf("Rejected malformed transaction from %s: %v", ShortID(peerID.String()), err)
+		return
+	}
 
 	// ── 1. Structural & Sanity Validations ──────────────────────────────────
 	// Reject empty or malformed transactions.
