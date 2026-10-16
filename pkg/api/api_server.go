@@ -509,7 +509,12 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Deserialize
-	tx := core.DeserializeTransaction(txBytes)
+	tx, err := core.DeserializeTransaction(txBytes)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(ErrorResponse{Error: "Invalid transaction encoding: " + err.Error()})
+		return
+	}
 
 	// ── 1. Structural & Sanity Validations ──────────────────────────────────
 	if len(tx.Vin) == 0 || len(tx.Vout) == 0 {

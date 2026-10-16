@@ -646,7 +646,11 @@ func send(cmd *cobra.Command, args []string) {
 
 				if rawData.Hex != "" {
 					txBytes, _ := hex.DecodeString(rawData.Hex)
-					prevTx := core.DeserializeTransaction(txBytes)
+					prevTx, err := core.DeserializeTransaction(txBytes)
+					if err != nil {
+						fmt.Printf("⛔ ERROR: Failed to deserialize previous transaction %s: %v\n", utxo.TxID, err)
+						os.Exit(1)
+					}
 					prevTXs[utxo.TxID] = prevTx
 				}
 			}
