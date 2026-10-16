@@ -193,6 +193,30 @@ func TestDeserializeTransactionRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTransactionRejectsNegativeOutput(t *testing.T) {
+	tx := Transaction{Vout: []TxOutput{{Value: -1}}}
+	if _, err := DeserializeTransaction(tx.Serialize()); err == nil {
+		t.Fatal("transaction with a negative output was accepted")
+	}
+}
+
+func TestTransactionRejectsValueOverflow(t *testing.T) {
+	tx := Transaction{Vout: []TxOutput{
+		{Value: 891_000_000_000_000},
+		{Value: 1},
+	}}
+	if _, err := DeserializeTransaction(tx.Serialize()); err == nil {
+		t.Fatal("transaction with outputs exceeding the monetary limit was accepted")
+	}
+}
+
+func TestTransactionAcceptsMaximumValidValue(t *testing.T) {
+	tx := Transaction{Vout: []TxOutput{{Value: 891_000_000_000_000}}}
+	if _, err := DeserializeTransaction(tx.Serialize()); err != nil {
+		t.Fatalf("transaction with the maximum valid output was rejected: %v", err)
+	}
+}
+
 func TestLowSCanonicalEnforcementAndMalleabilityAttack(t *testing.T) {
 	privKey, pubKey := generateTestKeyPair()
 	pubKeyHash := HashPubKey(pubKey)

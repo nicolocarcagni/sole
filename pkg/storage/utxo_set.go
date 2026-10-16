@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -276,6 +277,13 @@ func DeserializeUTXO(data []byte) (core.TxOutput, error) {
 	return out, nil
 }
 
+func addAmount(total, value int64) (int64, error) {
+	if total < 0 || value < 0 || value > math.MaxInt64-total {
+		return 0, fmt.Errorf("amount total overflows int64")
+	}
+	return total + value, nil
+}
+
 func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 	db := u.Blockchain.Database
 	valid := true
@@ -293,6 +301,10 @@ func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 	for _, tx := range block.Transactions {
 		if tx == nil {
 			fmt.Println("⚠️ [ValidateBlockTransactions] Nil transaction found in block, rejecting...")
+			return false
+		}
+		if err := tx.ValidateAmounts(); err != nil {
+			fmt.Printf("⛔ [ValidateBlockTransactions] Invalid transaction amounts: %v\n", err)
 			return false
 		}
 		txID := hex.EncodeToString(tx.ID)
@@ -317,7 +329,12 @@ func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 			txOutputTotal := int64(0)
 
 			for _, out := range tx.Vout {
-				txOutputTotal += out.Value
+				var addErr error
+				txOutputTotal, addErr = addAmount(txOutputTotal, out.Value)
+				if addErr != nil {
+					valid = false
+					return nil
+				}
 			}
 
 			for _, vin := range tx.Vin {
@@ -338,7 +355,12 @@ func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 						if int(vin.Vout) < len(parentTx.Vout) {
 							matchedOut := parentTx.Vout[vin.Vout]
 							if !matchedOut.IsOPReturn() {
-								txInputTotal += matchedOut.Value
+								var addErr error
+								txInputTotal, addErr = addAmount(txInputTotal, matchedOut.Value)
+								if addErr != nil {
+									valid = false
+									return nil
+								}
 							}
 						}
 					}
@@ -363,18 +385,29 @@ func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 				if err != nil {
 					return err
 				}
-				txInputTotal += out.Value
+				var addErr error
+				txInputTotal, addErr = addAmount(txInputTotal, out.Value)
+				if addErr != nil {
+					valid = false
+					return nil
+				}
 
 				spentInBlock[key] = true
 			}
 
-			fee := txInputTotal - txOutputTotal
-			if fee < 0 {
+			if txInputTotal < txOutputTotal {
+				fee := txInputTotal - txOutputTotal
 				fmt.Printf("⛔ [UTXOSet] Invalid transaction: Fees cannot be negative (%d)\n", fee)
 				valid = false
 				return nil
 			}
-			totalFees += fee
+			fee := txInputTotal - txOutputTotal
+			var addErr error
+			totalFees, addErr = addAmount(totalFees, fee)
+			if addErr != nil {
+				valid = false
+				return nil
+			}
 		}
 
 		// Validate Coinbase core.Block Reward + Fees Limit
@@ -382,7 +415,11 @@ func (u UTXOSet) ValidateBlockTransactions(block *core.Block) bool {
 			cbTx := block.Transactions[0]
 			coinbaseValue := cbTx.Vout[0].Value
 			allowedSubsidy := u.Blockchain.GetBlockSubsidy(block.Height)
-			maxAllowedReward := allowedSubsidy + totalFees
+			maxAllowedReward, addErr := addAmount(allowedSubsidy, totalFees)
+			if addErr != nil {
+				valid = false
+				return nil
+			}
 
 			if coinbaseValue > maxAllowedReward {
 				fmt.Printf("⛔ [UTXOSet] Invalid block: Coinbase reward %d exceeds max allowed %d (Subsidy: %d + Fees: %d)\n", coinbaseValue, maxAllowedReward, allowedSubsidy, totalFees)
@@ -406,6 +443,9 @@ func (u UTXOSet) CalculateFee(tx *core.Transaction, mempool ...map[string]core.M
 	if tx == nil {
 		return 0, fmt.Errorf("transaction is nil")
 	}
+	if err := tx.ValidateAmounts(); err != nil {
+		return 0, fmt.Errorf("invalid transaction amounts: %w", err)
+	}
 	if tx.IsCoinbase() {
 		return 0, nil
 	}
@@ -419,7 +459,11 @@ func (u UTXOSet) CalculateFee(tx *core.Transaction, mempool ...map[string]core.M
 	var outputTotal int64
 
 	for _, out := range tx.Vout {
-		outputTotal += out.Value
+		var err error
+		outputTotal, err = addAmount(outputTotal, out.Value)
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	db := u.Blockchain.Database
@@ -434,7 +478,12 @@ func (u UTXOSet) CalculateFee(tx *core.Transaction, mempool ...map[string]core.M
 				if mp != nil {
 					if mempoolItem, exists := mp[txID]; exists {
 						if int(vin.Vout) < len(mempoolItem.Tx.Vout) {
-							inputTotal += mempoolItem.Tx.Vout[vin.Vout].Value
+							parentOutput := mempoolItem.Tx.Vout[vin.Vout]
+							var addErr error
+							inputTotal, addErr = addAmount(inputTotal, parentOutput.Value)
+							if addErr != nil {
+								return addErr
+							}
 							continue
 						}
 					}
@@ -455,7 +504,10 @@ func (u UTXOSet) CalculateFee(tx *core.Transaction, mempool ...map[string]core.M
 			if err != nil {
 				return err
 			}
-			inputTotal += out.Value
+			inputTotal, err = addAmount(inputTotal, out.Value)
+			if err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -464,9 +516,10 @@ func (u UTXOSet) CalculateFee(tx *core.Transaction, mempool ...map[string]core.M
 		return 0, err
 	}
 
-	fee := inputTotal - outputTotal
-	if fee < 0 {
+	if inputTotal < outputTotal {
+		fee := inputTotal - outputTotal
 		return 0, fmt.Errorf("negative fee (%d)", fee)
 	}
+	fee := inputTotal - outputTotal
 	return fee, nil
 }
