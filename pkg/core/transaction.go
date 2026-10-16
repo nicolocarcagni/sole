@@ -16,9 +16,10 @@ import (
 )
 
 const (
-	MaxTxInputs  = 10000
-	MaxTxOutputs = 10000
-	MaxFieldLen  = 1 << 20 // 1MB per field
+	MaxTxInputs        = 10000
+	MaxTxOutputs       = 10000
+	MaxFieldLen        = 1 << 20             // 1MB per field
+	MaxMoney     int64 = 8910000 * 100000000 // Maximum supply in atomic units
 )
 
 type TxOutput struct {
@@ -44,6 +45,10 @@ func (out *TxOutput) IsOPReturn() bool {
 }
 
 func NewTxOutput(value int64, address string) (*TxOutput, error) {
+	if value < 0 || value > MaxMoney {
+		return nil, fmt.Errorf("output value %d is outside the valid range [0, %d]", value, MaxMoney)
+	}
+
 	txo := &TxOutput{value, nil}
 	err := txo.Lock([]byte(address))
 	if err != nil {
@@ -93,6 +98,22 @@ type Transaction struct {
 	Vin       []TxInput
 	Vout      []TxOutput
 	Timestamp int64
+}
+
+// ValidateAmounts checks that every output and the transaction output total
+// are within the consensus monetary limit.
+func (tx Transaction) ValidateAmounts() error {
+	var total int64
+	for i, output := range tx.Vout {
+		if output.Value < 0 {
+			return fmt.Errorf("output %d has negative value %d", i, output.Value)
+		}
+		if output.Value > MaxMoney-total {
+			return fmt.Errorf("transaction output total exceeds maximum money supply %d", MaxMoney)
+		}
+		total += output.Value
+	}
+	return nil
 }
 
 func (tx Transaction) Serialize() []byte {
@@ -231,6 +252,9 @@ func DeserializeTransaction(data []byte) (Transaction, error) {
 	if reader.Len() != 0 {
 		return tx, fmt.Errorf("transaction has %d trailing bytes", reader.Len())
 	}
+	if err := tx.ValidateAmounts(); err != nil {
+		return tx, fmt.Errorf("invalid transaction amounts: %w", err)
+	}
 
 	// Recalculate Hash (ID)
 	tx.ID = tx.Hash()
@@ -282,6 +306,9 @@ func (tx Transaction) SerializeForHash() []byte {
 }
 
 func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transaction) error {
+	if err := tx.ValidateAmounts(); err != nil {
+		return fmt.Errorf("invalid transaction amounts: %w", err)
+	}
 	if tx.IsCoinbase() {
 		return nil
 	}
@@ -326,6 +353,10 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 }
 
 func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
+	if err := tx.ValidateAmounts(); err != nil {
+		fmt.Printf("⛔ ERROR: Invalid transaction amounts: %v\n", err)
+		return false
+	}
 	if tx.IsCoinbase() {
 		return true
 	}

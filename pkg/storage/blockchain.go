@@ -479,9 +479,9 @@ func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.
 }
 
 const (
-	MaxSupply       = 8910000 * 100000000 // 8.91M * 10^8
-	InitialSubsidy  = 10 * 100000000      // 10 SOLE
-	HalvingInterval = 195500              // Blocks
+	MaxSupply       = core.MaxMoney
+	InitialSubsidy  = 10 * 100000000 // 10 SOLE
+	HalvingInterval = 195500         // Blocks
 )
 
 // GetBlockSubsidy calculates the mining reward based on block height (Halving)
