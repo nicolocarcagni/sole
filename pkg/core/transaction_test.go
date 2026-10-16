@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"math/big"
 	"testing"
@@ -78,6 +79,66 @@ func TestTxIDPostSigningAndSerializationConsistency(t *testing.T) {
 	// Assert bytes.Equal(tx.ID, deserializedTx.ID) is true
 	if !bytes.Equal(tx.ID, deserializedTx.ID) {
 		t.Fatalf("Serialization invariant failed: original ID %x != deserialized ID %x", tx.ID, deserializedTx.ID)
+	}
+}
+
+func TestSerializeForHashDistinguishesDifferentStructures(t *testing.T) {
+	txA := Transaction{
+		Vin: []TxInput{{
+			Txid:      []byte{0x01},
+			Vout:      2,
+			Signature: []byte{0x04},
+			PubKey:    []byte{0x03},
+		}},
+		Timestamp: 5,
+	}
+	txB := Transaction{
+		Vin: []TxInput{{
+			Txid:   []byte{0x01},
+			Vout:   2,
+			PubKey: []byte{0x03, 0x04},
+		}},
+		Timestamp: 5,
+	}
+
+	if bytes.Equal(txA.SerializeForHash(), txB.SerializeForHash()) {
+		t.Fatal("different input field boundaries produced the same hash preimage")
+	}
+	if bytes.Equal(txA.Hash(), txB.Hash()) {
+		t.Fatal("different transaction structures produced the same transaction ID")
+	}
+}
+
+func TestTransactionIDCanonicalEncoding(t *testing.T) {
+	tx := Transaction{
+		Vin: []TxInput{{
+			Txid:      []byte{0xaa, 0xbb},
+			Vout:      1,
+			Signature: []byte{0xcc},
+			PubKey:    []byte{0xdd, 0xee},
+		}},
+		Vout:      []TxOutput{{Value: 7, PubKeyHash: []byte{0xff}}},
+		Timestamp: 9,
+	}
+
+	wantEncoding := []byte{
+		0, 0, 0, 0, 0, 0, 0, 1, // input count
+		0, 0, 0, 0, 0, 0, 0, 2, 0xaa, 0xbb, // Txid length and bytes
+		0, 0, 0, 0, 0, 0, 0, 1, // Vout
+		0, 0, 0, 0, 0, 0, 0, 1, 0xcc, // Signature length and bytes
+		0, 0, 0, 0, 0, 0, 0, 2, 0xdd, 0xee, // PubKey length and bytes
+		0, 0, 0, 0, 0, 0, 0, 1, // output count
+		0, 0, 0, 0, 0, 0, 0, 7, // Value
+		0, 0, 0, 0, 0, 0, 0, 1, 0xff, // PubKeyHash length and bytes
+		0, 0, 0, 0, 0, 0, 0, 9, // Timestamp
+	}
+	if got := tx.SerializeForHash(); !bytes.Equal(got, wantEncoding) {
+		t.Fatalf("unexpected canonical transaction encoding:\n got %x\nwant %x", got, wantEncoding)
+	}
+
+	wantID := sha256.Sum256(wantEncoding)
+	if got := tx.Hash(); !bytes.Equal(got, wantID[:]) {
+		t.Fatalf("transaction ID does not hash the canonical encoding: got %x, want %x", got, wantID)
 	}
 }
 

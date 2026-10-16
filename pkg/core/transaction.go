@@ -243,23 +243,33 @@ func (tx *Transaction) Hash() []byte {
 
 func (tx Transaction) SerializeForHash() []byte {
 	var encoded bytes.Buffer
+	var integer [8]byte
+	writeInt64 := func(value int64) {
+		binary.BigEndian.PutUint64(integer[:], uint64(value))
+		encoded.Write(integer[:])
+	}
+	writeBytes := func(value []byte) {
+		writeInt64(int64(len(value)))
+		encoded.Write(value)
+	}
 
-	// Vin
+	// Inputs
+	writeInt64(int64(len(tx.Vin)))
 	for _, vin := range tx.Vin {
-		encoded.Write(vin.Txid)
-		binary.Write(&encoded, binary.BigEndian, int64(vin.Vout))
-		encoded.Write(vin.PubKey)
-		encoded.Write(vin.Signature)
+		writeBytes(vin.Txid)
+		writeInt64(int64(vin.Vout))
+		writeBytes(vin.Signature)
+		writeBytes(vin.PubKey)
 	}
 
-	// Vout
+	// Outputs
+	writeInt64(int64(len(tx.Vout)))
 	for _, vout := range tx.Vout {
-		binary.Write(&encoded, binary.BigEndian, vout.Value)
-		encoded.Write(vout.PubKeyHash)
+		writeInt64(vout.Value)
+		writeBytes(vout.PubKeyHash)
 	}
 
-	// Timestamp
-	binary.Write(&encoded, binary.BigEndian, tx.Timestamp)
+	writeInt64(tx.Timestamp)
 
 	return encoded.Bytes()
 }
