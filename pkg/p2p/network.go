@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -205,6 +206,13 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to continue blockchain: %w", err)
 	}
 	utxoSet := &storage.UTXOSet{Blockchain: chain}
+	if err := utxoSet.Reindex(); err != nil {
+		cleanupErr := errors.Join(chain.Database.Close(), h.Close())
+		if cleanupErr != nil {
+			return nil, fmt.Errorf("failed to rebuild canonical UTXO set: %w (cleanup failed: %v)", err, cleanupErr)
+		}
+		return nil, fmt.Errorf("failed to rebuild canonical UTXO set: %w", err)
+	}
 
 	server := &Server{
 		Host:             h,
@@ -568,8 +576,7 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 			return
 		}
 
-		if s.Blockchain.AddBlock(block) {
-			s.UTXOSet.Update(block)
+		if s.Blockchain.AddBlockWithUTXO(block, s.UTXOSet) {
 			fmt.Printf("✅ core.Block added %x and UTXO set updated.\n", block.Hash)
 			if s.OnNewBlock != nil {
 				s.OnNewBlock(block)
@@ -887,14 +894,9 @@ func (s *Server) AttemptMine() {
 		txs = append([]*core.Transaction{cbTx}, txs...) // Coinbase first
 	}
 
-	newBlock, err := s.Blockchain.ForgeBlock(txs, *s.ValidatorPrivKey)
+	newBlock, err := s.Blockchain.ForgeBlockWithUTXO(txs, *s.ValidatorPrivKey, s.UTXOSet)
 	if err != nil {
 		fmt.Printf("⚠️ ForgeBlock failed: %v\n", err)
-		return
-	}
-	err = s.UTXOSet.Update(newBlock)
-	if err != nil {
-		fmt.Printf("⚠️ storage.UTXOSet update failed: %v\n", err)
 		return
 	}
 	if s.OnNewBlock != nil {

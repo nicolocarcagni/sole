@@ -14,6 +14,7 @@ require (
 	github.com/spf13/viper v1.21.0
 	github.com/tyler-smith/go-bip39 v1.1.0
 	golang.org/x/crypto v0.47.0
+	golang.org/x/term v0.39.0
 	golang.org/x/time v0.14.0
 )
 

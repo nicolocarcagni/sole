@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"golang.org/x/term"
 
 	"github.com/nicolocarcagni/sole/pkg/api"
 	"github.com/nicolocarcagni/sole/pkg/consensus"
@@ -95,6 +97,7 @@ func printUsage(cmd *cobra.Command, args []string) {
 	// 1. WALLET
 	fmt.Fprintln(w, ColorYellow+"1. WALLET MANAGEMENT (wallet)"+ColorReset)
 	fmt.Fprintln(w, "  "+ColorGreen+"create"+ColorReset+"\tGenerates a new keypair.")
+	fmt.Fprintln(w, "  "+ColorGreen+"migrate"+ColorReset+"\tEncrypts an existing plaintext wallet file.")
 	fmt.Fprintln(w, "  "+ColorGreen+"list"+ColorReset+"\tLists saved addresses.")
 	fmt.Fprintln(w, "  "+ColorGreen+"import"+ColorReset+"\tImports a private key (--key <HEX>).")
 	fmt.Fprintln(w, "  "+ColorGreen+"recover"+ColorReset+"\tRecovers a wallet from 12-word mnemonic.")
@@ -157,6 +160,13 @@ func init() {
 		Run:   createWallet,
 	}
 	walletCmd.AddCommand(walletCreateCmd)
+
+	var walletMigrateCmd = &cobra.Command{
+		Use:   "migrate",
+		Short: "Encrypt an existing plaintext wallet file",
+		Run:   migrateWalletFile,
+	}
+	walletCmd.AddCommand(walletMigrateCmd)
 
 	var walletListCmd = &cobra.Command{
 		Use:   "list",
@@ -322,7 +332,7 @@ func startNode(cmd *cobra.Command, args []string) {
 		fmt.Printf("Forging enabled for address: %s\n", nodeMiner)
 
 		// Load wallet for this address
-		wallets, err := wallet.CreateWallets()
+		wallets, _, err := loadWalletsFromPrompt()
 		if err != nil {
 			if os.IsNotExist(err) {
 				fmt.Printf("⛔ ERROR: Private Key not found for address %s. wallet.Wallet file missing.\n", nodeMiner)
@@ -450,14 +460,17 @@ func runInit(cmd *cobra.Command, args []string) {
 }
 
 func createWallet(cmd *cobra.Command, args []string) {
-	wallets, _ := wallet.CreateWallets()
+	wallets, password, err := loadWalletsFromPrompt()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading wallets: %v\n", err)
+		os.Exit(1)
+	}
 	address, mnemonic, err := wallets.AddWallet()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating wallet: %v\n", err)
 		os.Exit(1)
 	}
-	err = wallets.SaveToFile()
-	if err != nil {
+	if err := saveWalletsWithPrompt(wallets, password); err != nil {
 		fmt.Fprintf(os.Stderr, "Error saving wallet: %v\n", err)
 		os.Exit(1)
 	}
@@ -470,15 +483,93 @@ func createWallet(cmd *cobra.Command, args []string) {
 	fmt.Printf("New wallet created: %s\n", address)
 }
 
+func readWalletPassword(prompt string) (string, error) {
+	fmt.Fprint(os.Stderr, prompt)
+	password, err := term.ReadPassword(int(os.Stdin.Fd()))
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return "", fmt.Errorf("failed to read password: %w", err)
+	}
+	return string(password), nil
+}
+
+func loadWalletsFromPrompt() (*wallet.Wallets, string, error) {
+	if _, err := os.Stat(wallet.WalletFile); os.IsNotExist(err) {
+		return &wallet.Wallets{Wallets: make(map[string]*wallet.Wallet)}, "", nil
+	} else if err != nil {
+		return nil, "", fmt.Errorf("failed to inspect wallet file: %w", err)
+	}
+	password, err := readWalletPassword("Wallet password: ")
+	if err != nil {
+		return nil, "", err
+	}
+	wallets, err := wallet.CreateWallets(password)
+	if err != nil {
+		return nil, "", err
+	}
+	return wallets, password, nil
+}
+
+func saveWalletsWithPrompt(wallets *wallet.Wallets, password string) error {
+	if password == "" {
+		newPassword, err := readWalletPassword("Create wallet password: ")
+		if err != nil {
+			return err
+		}
+		password = newPassword
+		if password == "" {
+			return errors.New("wallet password must not be empty")
+		}
+		confirmation, err := readWalletPassword("Confirm wallet password: ")
+		if err != nil {
+			return err
+		}
+		if password != confirmation {
+			return errors.New("wallet passwords do not match")
+		}
+	}
+	return wallets.SaveToFile(password)
+}
+
+func migrateWalletFile(cmd *cobra.Command, args []string) {
+	password, err := readWalletPassword("Create wallet password: ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if password == "" {
+		fmt.Fprintln(os.Stderr, "Error: wallet password must not be empty")
+		os.Exit(1)
+	}
+	confirmation, err := readWalletPassword("Confirm wallet password: ")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	if password != confirmation {
+		fmt.Fprintln(os.Stderr, "Error: wallet passwords do not match")
+		os.Exit(1)
+	}
+	if err := (&wallet.Wallets{}).MigrateLegacyWalletFile(password); err != nil {
+		fmt.Fprintf(os.Stderr, "Error migrating wallet file: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("Wallet file migrated and encrypted successfully.")
+}
+
 func runImportWallet(cmd *cobra.Command, args []string) {
-	wallets, _ := wallet.CreateWallets()
+	wallets, password, err := loadWalletsFromPrompt()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading wallets: %v\n", err)
+		os.Exit(1)
+	}
 	address, err := wallets.ImportWallet(privKeyFlag)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: importing wallet: %v\n", err)
 		os.Exit(1)
 	}
 
-	if err := wallets.SaveToFile(); err != nil {
+	if err := saveWalletsWithPrompt(wallets, password); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: saving wallet: %v\n", err)
 		os.Exit(1)
 	}
@@ -495,7 +586,11 @@ func runRecoverWallet(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	wallets, _ := wallet.CreateWallets()
+	wallets, password, err := loadWalletsFromPrompt()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error loading wallets: %v\n", err)
+		os.Exit(1)
+	}
 
 	address, err := wallets.RecoverWallet(mnemonic)
 	if err != nil {
@@ -503,7 +598,10 @@ func runRecoverWallet(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	wallets.SaveToFile()
+	if err := saveWalletsWithPrompt(wallets, password); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving wallet: %v\n", err)
+		os.Exit(1)
+	}
 	fmt.Printf("✅ Success! wallet.Wallet recovered. Address: %s\n", address)
 }
 
@@ -513,7 +611,7 @@ func runRemoveWallet(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	wallets, err := wallet.CreateWallets()
+	wallets, password, err := loadWalletsFromPrompt()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
 		os.Exit(1)
@@ -539,7 +637,10 @@ func runRemoveWallet(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	wallets.SaveToFile()
+	if err := saveWalletsWithPrompt(wallets, password); err != nil {
+		fmt.Fprintf(os.Stderr, "Error saving wallet: %v\n", err)
+		os.Exit(1)
+	}
 
 	fmt.Printf("✅ wallet.Wallet %s removed successfully.\n", addressFlag)
 }
@@ -592,7 +693,7 @@ func send(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("💸 Sending: %.8f SOLE (%d Photons) | Fee: %.8f SOLE (%d Photons)\n", amountFlag, amountInt, feeFlag, feeInt)
 
-	wallets, err := wallet.CreateWallets()
+	wallets, _, err := loadWalletsFromPrompt()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
 		os.Exit(1)
@@ -760,7 +861,7 @@ func printWallet(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	wallets, err := wallet.CreateWallets()
+	wallets, _, err := loadWalletsFromPrompt()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: loading wallets: %v\n", err)
 		os.Exit(1)
@@ -789,7 +890,7 @@ func printWallet(cmd *cobra.Command, args []string) {
 }
 
 func listAddresses(cmd *cobra.Command, args []string) {
-	wallets, err := wallet.CreateWallets()
+	wallets, _, err := loadWalletsFromPrompt()
 	if err != nil {
 		if os.IsNotExist(err) {
 			fmt.Println("No wallets found.")
@@ -799,6 +900,10 @@ func listAddresses(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 	addresses := wallets.GetAddresses()
+	if len(addresses) == 0 {
+		fmt.Println("No wallets found.")
+		return
+	}
 
 	fmt.Println("=== Local wallet.Wallets ===")
 	for _, address := range addresses {

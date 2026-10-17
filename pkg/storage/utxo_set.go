@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -21,36 +22,8 @@ type UTXOSet struct {
 }
 
 func (u UTXOSet) Reindex() error {
-	db := u.Blockchain.Database
-	bucketName := []byte(UtxoPrefix)
-
-	if err := db.DropPrefix(bucketName); err != nil {
-		return fmt.Errorf("failed to clear UTXO set prefix: %w", err)
-	}
-
-	// FindUTXO now returns map[string]map[int]core.TxOutput where the inner key is
-	// the ORIGINAL Vout index from the transaction — not a compacted slice position.
-	UTXO := u.Blockchain.FindUTXO()
-
-	err := db.Update(func(txn *badger.Txn) error {
-		for txId, outs := range UTXO {
-			for outIdx, out := range outs {
-				if out.IsOPReturn() {
-					continue
-				}
-				// outIdx is the true Vout index, so this key is always correct.
-				key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txId, outIdx)
-				serializedOut, err := SerializeUTXO(out)
-				if err != nil {
-					return err
-				}
-				err = txn.Set([]byte(key), serializedOut)
-				if err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+	err := u.Blockchain.Database.Update(func(txn *badger.Txn) error {
+		return u.reindexInTransaction(txn, u.Blockchain.LastHash)
 	})
 	if err != nil {
 		return fmt.Errorf("failed to rebuild UTXO set: %w", err)
@@ -59,47 +32,105 @@ func (u UTXOSet) Reindex() error {
 }
 
 func (u UTXOSet) Update(block *core.Block) error {
-	db := u.Blockchain.Database
+	err := u.Blockchain.Database.Update(func(txn *badger.Txn) error {
+		return u.updateInTransaction(txn, block)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update UTXO set: %w", err)
+	}
+	return nil
+}
 
-	err := db.Update(func(txn *badger.Txn) error {
-		for _, tx := range block.Transactions {
-			if !tx.IsCoinbase() {
-				for _, vin := range tx.Vin {
-					txID := hex.EncodeToString(vin.Txid)
-					key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, vin.Vout)
-
-					// Delete spent output
-					err := txn.Delete([]byte(key))
-					if err == badger.ErrKeyNotFound {
-						// Ignored to prevent crash on re-org or double-spend attempt
-					} else if err != nil {
-						return err
-					}
-				}
-			}
-
-			// Add new outputs
-			for outIdx, out := range tx.Vout {
-				if out.IsOPReturn() {
-					continue
-				}
-				txID := hex.EncodeToString(tx.ID)
-				key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, outIdx)
-
-				serializedOut, err := SerializeUTXO(out)
-				if err != nil {
-					return err
-				}
-				err = txn.Set([]byte(key), serializedOut)
-				if err != nil {
+func (u UTXOSet) updateInTransaction(txn *badger.Txn, block *core.Block) error {
+	for _, tx := range block.Transactions {
+		if !tx.IsCoinbase() {
+			for _, vin := range tx.Vin {
+				txID := hex.EncodeToString(vin.Txid)
+				key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, vin.Vout)
+				if err := txn.Delete([]byte(key)); err != nil && err != badger.ErrKeyNotFound {
 					return err
 				}
 			}
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("failed to update UTXO set: %w", err)
+		for outIdx, out := range tx.Vout {
+			if out.IsOPReturn() {
+				continue
+			}
+			key := fmt.Sprintf("%s%s-%d", UtxoPrefix, hex.EncodeToString(tx.ID), outIdx)
+			serializedOut, err := SerializeUTXO(out)
+			if err != nil {
+				return err
+			}
+			if err := txn.Set([]byte(key), serializedOut); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (u UTXOSet) reindexInTransaction(txn *badger.Txn, tipHash []byte) error {
+	utxos := make(map[string]map[int]core.TxOutput)
+	spent := make(map[string]map[int]bool)
+	currentHash := append([]byte(nil), tipHash...)
+	for len(currentHash) != 0 {
+		item, err := txn.Get(currentHash)
+		if err != nil {
+			return fmt.Errorf("failed to read canonical block during UTXO rebuild: %w", err)
+		}
+		data, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		block := core.DeserializeBlock(data)
+		if block == nil {
+			return errors.New("failed to decode canonical block during UTXO rebuild")
+		}
+		for _, tx := range block.Transactions {
+			txID := hex.EncodeToString(tx.ID)
+			for outIdx, out := range tx.Vout {
+				if spent[txID] != nil && spent[txID][outIdx] {
+					continue
+				}
+				if utxos[txID] == nil {
+					utxos[txID] = make(map[int]core.TxOutput)
+				}
+				utxos[txID][outIdx] = out
+			}
+			if !tx.IsCoinbase() {
+				for _, input := range tx.Vin {
+					inputID := hex.EncodeToString(input.Txid)
+					if spent[inputID] == nil {
+						spent[inputID] = make(map[int]bool)
+					}
+					spent[inputID][input.Vout] = true
+				}
+			}
+		}
+		currentHash = block.PrevBlockHash
+	}
+
+	iterator := txn.NewIterator(badger.DefaultIteratorOptions)
+	defer iterator.Close()
+	for iterator.Seek([]byte(UtxoPrefix)); iterator.ValidForPrefix([]byte(UtxoPrefix)); iterator.Next() {
+		if err := txn.Delete(iterator.Item().KeyCopy(nil)); err != nil {
+			return err
+		}
+	}
+	for txID, outputs := range utxos {
+		for outIdx, output := range outputs {
+			if output.IsOPReturn() {
+				continue
+			}
+			serialized, err := SerializeUTXO(output)
+			if err != nil {
+				return err
+			}
+			key := fmt.Sprintf("%s%s-%d", UtxoPrefix, txID, outIdx)
+			if err := txn.Set([]byte(key), serialized); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }

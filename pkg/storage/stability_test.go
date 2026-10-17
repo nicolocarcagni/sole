@@ -30,7 +30,7 @@ func TestNewUTXOTransaction_InvalidAddress(t *testing.T) {
 	// Provide invalid destination address
 	// It should fail in NewUTXOTransaction or NewTxOutput gracefully
 	utxoSet := &UTXOSet{}
-	_, err := NewUTXOTransaction("sender", "invalid_address", 1000, 10, "", utxoSet)
+	_, err := NewUTXOTransaction("sender", "invalid_address", 1000, 10, "", utxoSet, "")
 	if err == nil {
 		t.Fatal("Expected error for invalid address, got nil")
 	}
@@ -76,14 +76,14 @@ func TestNewUTXOTransaction_InsufficientFunds(t *testing.T) {
 	// Write a minimal wallet.dat containing only the sender wallet so that
 	// wallet.CreateWallets() inside NewUTXOTransaction resolves the address.
 	ws := &wallet.Wallets{Wallets: map[string]*wallet.Wallet{from: senderWallet}}
-	if err := ws.SaveToFile(); err != nil {
+	if err := ws.SaveToFile("stability-test-password"); err != nil {
 		t.Fatalf("failed to write test wallet file: %v", err)
 	}
 	defer os.Remove(wallet.WalletFile) //nolint:errcheck
 
 	// The in-memory UTXO set is empty, so available balance is 0.
 	// NewUTXOTransaction must return an "insufficient funds" error.
-	_, txErr := NewUTXOTransaction(from, to, 1_000_000_000, 10_000_000, "", utxoSet)
+	_, txErr := NewUTXOTransaction(from, to, 1_000_000_000, 10_000_000, "", utxoSet, "stability-test-password")
 	if txErr == nil {
 		t.Fatal("Expected insufficient funds error, got nil")
 	}
@@ -102,7 +102,7 @@ func TestWallets_CorruptedWalletFile(t *testing.T) {
 
 	os.WriteFile(wallet.WalletFile, []byte("garbage data for wallet"), 0644)
 	ws := &wallet.Wallets{}
-	err := ws.LoadFromFile()
+	err := ws.LoadFromFile("")
 	if err == nil {
 		t.Fatal("Expected error for corrupted wallet file, got nil")
 	}
@@ -118,11 +118,11 @@ func TestIntToHex_NoPanic(t *testing.T) {
 	}
 }
 
-func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet) (*core.Transaction, error) {
+func NewUTXOTransaction(from, to string, amount int64, fee int64, memo string, utxoSet *UTXOSet, walletPassword string) (*core.Transaction, error) {
 	var inputs []core.TxInput
 	var outputs []core.TxOutput
 
-	wallets, err := wallet.CreateWallets()
+	wallets, err := wallet.CreateWallets(walletPassword)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create wallets: %w", err)
 	}

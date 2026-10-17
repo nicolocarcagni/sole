@@ -284,6 +284,19 @@ func (chain *Blockchain) GetBestHeight() int {
 }
 
 func (chain *Blockchain) ForgeBlock(transactions []*core.Transaction, privKey ecdsa.PrivateKey) (*core.Block, error) {
+	return chain.forgeBlock(transactions, privKey, nil)
+}
+
+// ForgeBlockWithUTXO atomically stores a newly forged canonical block and
+// applies its UTXO changes.
+func (chain *Blockchain) ForgeBlockWithUTXO(transactions []*core.Transaction, privKey ecdsa.PrivateKey, utxo *UTXOSet) (*core.Block, error) {
+	if utxo == nil || utxo.Blockchain != chain {
+		return nil, errors.New("UTXO set does not belong to blockchain")
+	}
+	return chain.forgeBlock(transactions, privKey, utxo)
+}
+
+func (chain *Blockchain) forgeBlock(transactions []*core.Transaction, privKey ecdsa.PrivateKey, utxo *UTXOSet) (*core.Block, error) {
 	chain.Mux.Lock()
 	defer chain.Mux.Unlock()
 
@@ -359,17 +372,39 @@ func (chain *Blockchain) ForgeBlock(transactions []*core.Transaction, privKey ec
 		if err != nil {
 			return err
 		}
-		chain.LastHash = newBlock.Hash
+		if utxo != nil {
+			if err := utxo.updateInTransaction(txn, newBlock); err != nil {
+				return fmt.Errorf("failed to update UTXO set during forgery: %w", err)
+			}
+		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to update database during forgery: %w", err)
 	}
+	chain.LastHash = append([]byte(nil), newBlock.Hash...)
 
 	return newBlock, nil
 }
 
 func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.Transaction) bool {
+	return chain.addBlock(block, nil, txCache...)
+}
+
+// AddBlockWithUTXO stores a block and applies its effects to the UTXO index
+// only when the block changes the canonical tip. Block, tip, and UTXO writes
+// share one Badger transaction so readers cannot observe a partial transition.
+func (chain *Blockchain) AddBlockWithUTXO(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) bool {
+	if utxo == nil || utxo.Blockchain != chain {
+		return false
+	}
+	return chain.addBlock(block, utxo, txCache...)
+}
+
+func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) bool {
+	if block == nil {
+		return false
+	}
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
 	_, err := chain.GetBlock(block.Hash)
 	if err == nil {
@@ -428,6 +463,7 @@ func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.
 		return false
 	}
 
+	var canonicalTip []byte
 	err = chain.Database.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get(block.Hash); err == nil {
 			return nil
@@ -465,7 +501,19 @@ func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.
 
 		if block.Height > lastBlock.Height {
 			err = txn.Set([]byte("lh"), block.Hash)
-			chain.LastHash = block.Hash
+			if err != nil {
+				return err
+			}
+			canonicalTip = append([]byte(nil), block.Hash...)
+			if utxo != nil {
+				if bytes.Equal(block.PrevBlockHash, lastHash) {
+					if err := utxo.updateInTransaction(txn, block); err != nil {
+						return fmt.Errorf("failed to update canonical UTXO set: %w", err)
+					}
+				} else if err := utxo.reindexInTransaction(txn, block.Hash); err != nil {
+					return fmt.Errorf("failed to rebuild UTXO set after reorganization: %w", err)
+				}
+			}
 		}
 
 		return err
@@ -474,6 +522,9 @@ func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.
 	if err != nil {
 		fmt.Printf("⛔ AddBlock: Failed to save block to database: %v\n", err)
 		return false
+	}
+	if len(canonicalTip) > 0 {
+		chain.LastHash = canonicalTip
 	}
 	return true
 }
