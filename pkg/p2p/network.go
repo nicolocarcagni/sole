@@ -206,12 +206,12 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, fmt.Errorf("failed to continue blockchain: %w", err)
 	}
 	utxoSet := &storage.UTXOSet{Blockchain: chain}
-	if err := utxoSet.Reindex(); err != nil {
+	if err := recoverUTXOSet(utxoSet); err != nil {
 		cleanupErr := errors.Join(chain.Database.Close(), h.Close())
 		if cleanupErr != nil {
-			return nil, fmt.Errorf("failed to rebuild canonical UTXO set: %w (cleanup failed: %v)", err, cleanupErr)
+			return nil, fmt.Errorf("%w (cleanup failed: %v)", err, cleanupErr)
 		}
-		return nil, fmt.Errorf("failed to rebuild canonical UTXO set: %w", err)
+		return nil, err
 	}
 
 	server := &Server{
@@ -260,6 +260,17 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		}
 	}
 	return server, nil
+}
+
+// recoverUTXOSet rebuilds the derived UTXO index before the server accepts traffic.
+func recoverUTXOSet(utxoSet *storage.UTXOSet) error {
+	if utxoSet == nil || utxoSet.Blockchain == nil || utxoSet.Blockchain.Database == nil {
+		return errors.New("cannot recover UTXO set without an open blockchain database")
+	}
+	if err := utxoSet.Reindex(); err != nil {
+		return fmt.Errorf("failed to rebuild canonical UTXO set: %w", err)
+	}
+	return nil
 }
 
 // Bootstrap attempts to connect to seed nodes
@@ -364,7 +375,9 @@ func (s *Server) ReadData(stream network.Stream, peerID peer.ID) {
 	case "getdata":
 		s.HandleGetData(content, peerID)
 	case "block":
-		s.HandleBlock(content, peerID)
+		if err := s.HandleBlock(content, peerID); err != nil {
+			log.Printf("Failed to handle block from %s: %v", ShortID(peerID.String()), err)
+		}
 	case "tx":
 		s.HandleTx(content, peerID)
 	default:
@@ -529,23 +542,21 @@ func (s *Server) HandleGetData(request []byte, peerID peer.ID) {
 	}
 }
 
-func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
+func (s *Server) HandleBlock(request []byte, peerID peer.ID) (handleErr error) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("⚡ Panic in HandleBlock: %v", r)
+			handleErr = fmt.Errorf("panic while handling block: %v", r)
 		}
 	}()
 	var payload BlockMsg
 	dec := gob.NewDecoder(bytes.NewReader(request))
 	if err := dec.Decode(&payload); err != nil {
-		log.Printf("Gob decode error inside HandleBlock: %v", err)
-		return
+		return fmt.Errorf("decode block message: %w", err)
 	}
 
 	block := core.DeserializeBlock(payload.Block)
 	if block == nil {
-		log.Printf("⚠️ [HandleBlock] Failed to deserialize block from %s. Dropping.", ShortID(peerID.String()))
-		return
+		return fmt.Errorf("deserialize block from %s", ShortID(peerID.String()))
 	}
 
 	s.BlockBufferMux.Lock()
@@ -564,8 +575,9 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 
 		// Check if we have all expected blocks
 		if buffered >= expected && expected > 0 {
-			s.applyBufferedBlocks()
+			return s.applyBufferedBlocks()
 		}
+		return nil
 	} else {
 		// === NORMAL MODE: Apply single block immediately ===
 		fmt.Printf("Received new block! Hash: %x Height: %d\n", block.Hash, block.Height)
@@ -573,16 +585,21 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 		// Validate UTXOs (Double-spend check) before processing the block
 		if !s.UTXOSet.ValidateBlockTransactions(block) {
 			fmt.Printf("⛔ core.Block %x rejected: Contains double-spends or invalid inputs.\n", block.Hash)
-			return
+			return nil
 		}
 
-		if s.Blockchain.AddBlockWithUTXO(block, s.UTXOSet) {
+		added, err := s.Blockchain.AddBlockWithUTXO(block, s.UTXOSet)
+		if err != nil {
+			return fmt.Errorf("persist received block: %w", err)
+		}
+		if added {
 			fmt.Printf("✅ core.Block added %x and UTXO set updated.\n", block.Hash)
 			if s.OnNewBlock != nil {
 				s.OnNewBlock(block)
 			}
 		} else {
 			fmt.Printf("core.Block discarded or duplicate: %x\n", block.Hash)
+			return nil
 		}
 
 		// Clean mempool
@@ -593,11 +610,12 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) {
 		}
 		s.MempoolMux.Unlock()
 	}
+	return nil
 }
 
 // applyBufferedBlocks sorts buffered blocks by height and applies them chronologically,
 // then performs a single UTXO reindex.
-func (s *Server) applyBufferedBlocks() {
+func (s *Server) applyBufferedBlocks() error {
 	s.BlockBufferMux.Lock()
 	defer func() {
 		// Reset IBD state
@@ -613,6 +631,9 @@ func (s *Server) applyBufferedBlocks() {
 		heights = append(heights, h)
 	}
 	sort.Ints(heights)
+	if len(heights) == 0 {
+		return nil
+	}
 
 	fmt.Printf("🔄 [IBD] Applying %d blocks in chronological order (height %d → %d)...\n",
 		len(heights), heights[0], heights[len(heights)-1])
@@ -628,26 +649,27 @@ func (s *Server) applyBufferedBlocks() {
 			log.Printf("⚠️ [IBD] Nil block encountered at height %d, skipping...", h)
 			continue
 		}
-		if s.Blockchain.AddBlock(block, ibdTxCache) {
+		added, err := s.Blockchain.AddBlockWithUTXO(block, s.UTXOSet, ibdTxCache)
+		if err != nil {
+			return fmt.Errorf("persist initial-sync block at height %d: %w", h, err)
+		}
+		if added {
 			applied++
 		}
 	}
 
 	fmt.Printf("✅ [IBD] Sync complete. Applied %d blocks.\n", applied)
 
-	// Broadcast the tip block to WebSocket clients
-	if len(heights) > 0 {
-		if tipBlock := s.BlockBuffer[heights[len(heights)-1]]; tipBlock != nil {
-			if s.OnNewBlock != nil {
-				s.OnNewBlock(tipBlock)
-			}
-		}
-	}
-
-	// Full UTXO reindex from the now-complete chain
+	// Reconcile derived state before announcing that initial sync has completed.
 	fmt.Println("🔄 [IBD] Rebuilding UTXO set (Reindex)...")
-	s.UTXOSet.Reindex()
+	if err := s.UTXOSet.Reindex(); err != nil {
+		return fmt.Errorf("rebuild UTXO set after initial sync: %w", err)
+	}
 	fmt.Println("✅ [IBD] UTXO Reindex complete.")
+	if tipBlock := s.BlockBuffer[heights[len(heights)-1]]; tipBlock != nil && s.OnNewBlock != nil {
+		s.OnNewBlock(tipBlock)
+	}
+	return nil
 }
 
 func (s *Server) HandleTx(request []byte, peerID peer.ID) {

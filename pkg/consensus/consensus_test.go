@@ -421,7 +421,7 @@ func TestAddBlock_AcceptsValidBlock(t *testing.T) {
 		t.Fatalf("consensus.SignBlock: %v", err)
 	}
 
-	if !chain.AddBlock(block) {
+	if added, err := chain.AddBlock(block); err != nil || !added {
 		t.Fatal("AddBlock rejected a valid block")
 	}
 }
@@ -464,7 +464,7 @@ func TestAddBlock_RejectsHashMismatch(t *testing.T) {
 		otherKey.PublicKey.Y.FillBytes(make([]byte, 32))...,
 	)
 
-	if chain.AddBlock(block) {
+	if added, err := chain.AddBlock(block); err != nil || added {
 		t.Fatal("AddBlock accepted a block with a tampered Validator — hash integrity check failed")
 	}
 }

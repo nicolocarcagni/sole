@@ -387,28 +387,38 @@ func (chain *Blockchain) forgeBlock(transactions []*core.Transaction, privKey ec
 	return newBlock, nil
 }
 
-func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.Transaction) bool {
+// AddBlock stores a block and reports storage failures separately from rejection.
+// It does not update a derived UTXO index; callers updating the canonical state
+// should use AddBlockWithUTXO or recover the index before serving it.
+func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.Transaction) (bool, error) {
 	return chain.addBlock(block, nil, txCache...)
 }
 
 // AddBlockWithUTXO stores a block and applies its effects to the UTXO index
 // only when the block changes the canonical tip. Block, tip, and UTXO writes
 // share one Badger transaction so readers cannot observe a partial transition.
-func (chain *Blockchain) AddBlockWithUTXO(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) bool {
+// It returns false with no error when the block is rejected or already stored.
+func (chain *Blockchain) AddBlockWithUTXO(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) (bool, error) {
 	if utxo == nil || utxo.Blockchain != chain {
-		return false
+		return false, errors.New("UTXO set does not belong to blockchain")
 	}
 	return chain.addBlock(block, utxo, txCache...)
 }
 
-func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) bool {
+func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) (bool, error) {
 	if block == nil {
-		return false
+		return false, nil
 	}
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
-	_, err := chain.GetBlock(block.Hash)
+	err := chain.Database.View(func(txn *badger.Txn) error {
+		_, err := txn.Get(block.Hash)
+		return err
+	})
 	if err == nil {
-		return false // Already processed
+		return false, nil // Already processed
+	}
+	if !errors.Is(err, badger.ErrKeyNotFound) {
+		return false, fmt.Errorf("failed to check for duplicate block: %w", err)
 	}
 
 	// 1. PoA Hardening: Validate block linkage and header
@@ -422,23 +432,33 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 			if err != nil {
 				return err
 			}
-			data, _ := item.ValueCopy(nil)
-			prevBlock = *core.DeserializeBlock(data)
+			data, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			decoded := core.DeserializeBlock(data)
+			if decoded == nil {
+				return errors.New("failed to decode parent block")
+			}
+			prevBlock = *decoded
 			return nil
 		})
 		if err != nil {
-			fmt.Printf("⛔ AddBlock: Parent block %x not found in DB. Orphan rejected.\n", block.PrevBlockHash[:4])
-			return false
+			if errors.Is(err, badger.ErrKeyNotFound) {
+				fmt.Printf("⛔ AddBlock: Parent block %x not found in DB. Orphan rejected.\n", block.PrevBlockHash[:min(4, len(block.PrevBlockHash))])
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to retrieve parent block: %w", err)
 		}
 
 		if block.Height != prevBlock.Height+1 {
 			fmt.Printf("⛔ AddBlock: Height mismatch. Expected %d, got %d\n", prevBlock.Height+1, block.Height)
-			return false
+			return false, nil
 		}
 
 		if err := consensus.ValidateBlockHeader(block, &prevBlock); err != nil {
 			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
-			return false
+			return false, nil
 		}
 	}
 
@@ -448,25 +468,28 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 	// happens to start with 0x00 (passing the raw PoW check).
 	if !bytes.Equal(block.Hash, block.CalculateHash()) {
 		fmt.Printf("⛔ AddBlock: core.Block rejected — hash integrity check failed for block at height %d\n", block.Height)
-		return false
+		return false, nil
 	}
 
 	// 3. Verify PoA signature
 	if !consensus.VerifyBlockSignature(block) {
 		fmt.Println("AddBlock: core.Block rejected - invalid PoA signature")
-		return false
+		return false, nil
 	}
 
 	// 4. Verify all internal transaction signatures (including intra-block + cross-block cache)
 	if !chain.VerifyBlockTransactions(block, txCache...) {
 		fmt.Println("AddBlock: core.Block rejected - invalid transaction signatures")
-		return false
+		return false, nil
 	}
 
 	var canonicalTip []byte
+	added := false
 	err = chain.Database.Update(func(txn *badger.Txn) error {
 		if _, err := txn.Get(block.Hash); err == nil {
 			return nil
+		} else if !errors.Is(err, badger.ErrKeyNotFound) {
+			return err
 		}
 
 		blockData, err := block.Serialize()
@@ -477,6 +500,7 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 		if err != nil {
 			return err
 		}
+		added = true
 
 		// Index transactions for O(1) lookup
 		for _, tx := range block.Transactions {
@@ -490,14 +514,23 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 		if err != nil {
 			return err
 		}
-		lastHash, _ := item.ValueCopy(nil)
+		lastHash, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
 
 		item, err = txn.Get(lastHash)
 		if err != nil {
 			return err
 		}
-		lastBlockData, _ := item.ValueCopy(nil)
+		lastBlockData, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
 		lastBlock := core.DeserializeBlock(lastBlockData)
+		if lastBlock == nil {
+			return errors.New("failed to decode current tip block")
+		}
 
 		if block.Height > lastBlock.Height {
 			err = txn.Set([]byte("lh"), block.Hash)
@@ -520,13 +553,13 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 	})
 
 	if err != nil {
-		fmt.Printf("⛔ AddBlock: Failed to save block to database: %v\n", err)
-		return false
+		fmt.Printf("⛔ AddBlock: Failed to save block at height %d\n", block.Height)
+		return false, fmt.Errorf("failed to save block and update canonical state: %w", err)
 	}
 	if len(canonicalTip) > 0 {
-		chain.LastHash = canonicalTip
+		chain.LastHash = append([]byte(nil), canonicalTip...)
 	}
-	return true
+	return added, nil
 }
 
 const (

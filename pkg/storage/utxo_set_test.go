@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -96,11 +97,11 @@ func TestSideBranchDoesNotChangeUTXO(t *testing.T) {
 		t.Fatal(err)
 	}
 	main := makeSignedCoinbaseBlock(t, key, &genesis, "main-branch-tx", 10)
-	if !chain.AddBlockWithUTXO(main, utxo) {
+	if added, err := chain.AddBlockWithUTXO(main, utxo); err != nil || !added {
 		t.Fatal("failed to add canonical block")
 	}
 	side := makeSignedCoinbaseBlock(t, key, &genesis, "side-branch-tx", 20)
-	if !chain.AddBlockWithUTXO(side, utxo) {
+	if added, err := chain.AddBlockWithUTXO(side, utxo); err != nil || !added {
 		t.Fatal("failed to store valid side-branch block")
 	}
 
@@ -124,7 +125,7 @@ func TestLongerForkRebuildsUTXOSet(t *testing.T) {
 	main1 := makeSignedCoinbaseBlock(t, key, &genesis, "main-one", 10)
 	main2 := makeSignedCoinbaseBlock(t, key, main1, "main-two", 11)
 	for _, block := range []*core.Block{main1, main2} {
-		if !chain.AddBlockWithUTXO(block, utxo) {
+		if added, err := chain.AddBlockWithUTXO(block, utxo); err != nil || !added {
 			t.Fatalf("failed to add canonical block %x", block.Hash)
 		}
 	}
@@ -132,7 +133,7 @@ func TestLongerForkRebuildsUTXOSet(t *testing.T) {
 	fork2 := makeSignedCoinbaseBlock(t, key, fork1, "fork-two", 21)
 	fork3 := makeSignedCoinbaseBlock(t, key, fork2, "fork-three", 22)
 	for _, block := range []*core.Block{fork1, fork2, fork3} {
-		if !chain.AddBlockWithUTXO(block, utxo) {
+		if added, err := chain.AddBlockWithUTXO(block, utxo); err != nil || !added {
 			t.Fatalf("failed to add fork block %x", block.Hash)
 		}
 	}
@@ -160,11 +161,11 @@ func TestEqualHeightForkKeepsConsistentState(t *testing.T) {
 		t.Fatal(err)
 	}
 	main := makeSignedCoinbaseBlock(t, key, &genesis, "equal-main", 10)
-	if !chain.AddBlockWithUTXO(main, utxo) {
+	if added, err := chain.AddBlockWithUTXO(main, utxo); err != nil || !added {
 		t.Fatal("failed to add canonical block")
 	}
 	equal := makeSignedCoinbaseBlock(t, key, &genesis, "equal-fork", 12)
-	if !chain.AddBlockWithUTXO(equal, utxo) {
+	if added, err := chain.AddBlockWithUTXO(equal, utxo); err != nil || !added {
 		t.Fatal("failed to store equal-height fork")
 	}
 	if !bytes.Equal(chain.LastHash, main.Hash) {
@@ -175,6 +176,104 @@ func TestEqualHeightForkKeepsConsistentState(t *testing.T) {
 	}
 	if keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString([]byte("equal-fork")))) {
 		t.Fatal("equal-height fork UTXO polluted canonical state")
+	}
+}
+
+func TestAddBlockAndUTXOAreAtomic(t *testing.T) {
+	chain, utxo, key := setupCanonicalUTXOTest(t)
+	parent, err := chain.GetBlock(chain.LastHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction := &core.Transaction{
+		ID:        bytes.Repeat([]byte{0xab}, 32500),
+		Vin:       []core.TxInput{{Txid: []byte{}, Vout: -1, PubKey: []byte("coinbase")}},
+		Vout:      []core.TxOutput{{Value: 1, PubKeyHash: []byte("atomic-owner")}},
+		Timestamp: time.Now().Unix(),
+	}
+	validator := append(key.PublicKey.X.FillBytes(make([]byte, 32)), key.PublicKey.Y.FillBytes(make([]byte, 32))...)
+	block := &core.Block{
+		Timestamp:     parent.Timestamp + 1,
+		Transactions:  []*core.Transaction{transaction},
+		PrevBlockHash: append([]byte(nil), parent.Hash...),
+		Height:        parent.Height + 1,
+		Validator:     validator,
+	}
+	consensus.MineBlock(block)
+	if err := consensus.SignBlock(block, *key); err != nil {
+		t.Fatal(err)
+	}
+	initialUTXOCount, err := utxo.CountTransactions()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := chain.AddBlockWithUTXO(block, utxo)
+	if err == nil {
+		t.Fatal("expected oversized UTXO key to fail the Badger transaction")
+	}
+	if !strings.Contains(err.Error(), "failed to update canonical UTXO set") {
+		t.Fatalf("block addition failed outside the UTXO write: %v", err)
+	}
+	if added {
+		t.Fatal("block was reported added after its UTXO write failed")
+	}
+	if !bytes.Equal(chain.LastHash, parent.Hash) {
+		t.Fatal("in-memory tip advanced after the atomic database transaction failed")
+	}
+
+	err = chain.Database.View(func(txn *badger.Txn) error {
+		if _, err := txn.Get(block.Hash); err != badger.ErrKeyNotFound {
+			return fmt.Errorf("failed block write was not rolled back: %v", err)
+		}
+		tip, err := txn.Get([]byte("lh"))
+		if err != nil {
+			return err
+		}
+		tipHash, err := tip.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(tipHash, parent.Hash) {
+			return fmt.Errorf("tip hash %x changed after the failed transaction", tipHash)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	finalUTXOCount, err := utxo.CountTransactions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalUTXOCount != initialUTXOCount {
+		t.Fatalf("UTXO set changed after transaction failure: before %d, after %d", initialUTXOCount, finalUTXOCount)
+	}
+}
+
+func TestStartupRecoversInterruptedUTXOUpdate(t *testing.T) {
+	chain, utxo, key := setupCanonicalUTXOTest(t)
+	parent, err := chain.GetBlock(chain.LastHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block := makeSignedCoinbaseBlock(t, key, &parent, "recovery-block-tx", 1)
+
+	// Simulate a block persisted before its derived UTXO index was updated.
+	if added, err := chain.AddBlock(block); err != nil || !added {
+		t.Fatal("failed to persist block for recovery scenario")
+	}
+	utxoKey := fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString(block.Transactions[0].ID))
+	if keyExists(t, chain.Database, utxoKey) {
+		t.Fatal("test setup unexpectedly created the block UTXO")
+	}
+
+	// Startup rebuilds the derived index from the canonical chain before serving.
+	if err := utxo.Reindex(); err != nil {
+		t.Fatalf("startup recovery failed: %v", err)
+	}
+	if !keyExists(t, chain.Database, utxoKey) {
+		t.Fatal("startup recovery did not restore the canonical block UTXO")
 	}
 }
 
