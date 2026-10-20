@@ -406,7 +406,7 @@ func (rs *RestServer) getUTXOs(w http.ResponseWriter, r *http.Request) {
 
 func (rs *RestServer) getTip(w http.ResponseWriter, r *http.Request) {
 	height := rs.P2P.Blockchain.GetBestHeight()
-	hash := rs.P2P.Blockchain.LastHash
+	hash := rs.P2P.Blockchain.GetLastHash()
 	json.NewEncoder(w).Encode(TipResponse{Height: height, Hash: hex.EncodeToString(hash)})
 }
 

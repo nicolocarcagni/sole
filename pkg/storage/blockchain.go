@@ -54,6 +54,7 @@ type Blockchain struct {
 	LastHash []byte
 	Database *badger.DB
 	Mux      sync.Mutex
+	updateFn func(func(*badger.Txn) error) error
 }
 
 type BlockchainIterator struct {
@@ -112,7 +113,7 @@ func InitBlockchain() (*Blockchain, error) {
 		return nil, fmt.Errorf("InitBlockchain database update failed: %w", err)
 	}
 
-	blockchain := Blockchain{lastHash, db, sync.Mutex{}}
+	blockchain := Blockchain{LastHash: lastHash, Database: db}
 	return &blockchain, nil
 }
 
@@ -142,7 +143,7 @@ func ContinueBlockchain(address string) (*Blockchain, error) {
 		return nil, fmt.Errorf("failed to retrieve last block hash: %w", err)
 	}
 
-	chain := Blockchain{lastHash, db, sync.Mutex{}}
+	chain := Blockchain{LastHash: lastHash, Database: db}
 	return &chain, nil
 }
 
@@ -173,7 +174,7 @@ func ContinueBlockchainReadOnly(address string) (*Blockchain, error) {
 		return nil, fmt.Errorf("failed to retrieve last block hash (Read-Only): %w", err)
 	}
 
-	chain := Blockchain{lastHash, db, sync.Mutex{}}
+	chain := Blockchain{LastHash: lastHash, Database: db}
 	return &chain, nil
 }
 
@@ -208,7 +209,7 @@ func ContinueBlockchainSnapshot(customPath string) (*Blockchain, error) {
 		return nil, fmt.Errorf("failed to retrieve last block hash: %w", err)
 	}
 
-	chain := Blockchain{lastHash, db, sync.Mutex{}}
+	chain := Blockchain{LastHash: lastHash, Database: db}
 	return &chain, nil
 }
 
@@ -225,6 +226,20 @@ func (chain *Blockchain) GetBlock(blockHash []byte) (core.Block, error) {
 		return nil
 	})
 	return block, err
+}
+
+// GetLastHash returns a defensive copy of the current in-memory tip hash.
+func (chain *Blockchain) GetLastHash() []byte {
+	chain.Mux.Lock()
+	defer chain.Mux.Unlock()
+	return append([]byte(nil), chain.LastHash...)
+}
+
+func (chain *Blockchain) updateDatabase(update func(*badger.Txn) error) error {
+	if chain.updateFn != nil {
+		return chain.updateFn(update)
+	}
+	return chain.Database.Update(update)
 }
 
 // GetBlockHashes returns a list of hashes of all the blocks in the chain
@@ -350,7 +365,7 @@ func (chain *Blockchain) forgeBlock(transactions []*core.Transaction, privKey ec
 		return nil, fmt.Errorf("failed to sign block: %w", err)
 	}
 
-	err = chain.Database.Update(func(txn *badger.Txn) error {
+	err = chain.updateDatabase(func(txn *badger.Txn) error {
 		serialized, err := newBlock.Serialize()
 		if err != nil {
 			return err
@@ -383,7 +398,6 @@ func (chain *Blockchain) forgeBlock(transactions []*core.Transaction, privKey ec
 		return nil, fmt.Errorf("failed to update database during forgery: %w", err)
 	}
 	chain.LastHash = append([]byte(nil), newBlock.Hash...)
-
 	return newBlock, nil
 }
 
@@ -526,7 +540,7 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 
 	var canonicalTip []byte
 	added := false
-	err = chain.Database.Update(func(txn *badger.Txn) error {
+	err = chain.updateDatabase(func(txn *badger.Txn) error {
 		if _, err := txn.Get(block.Hash); err == nil {
 			return nil
 		} else if !errors.Is(err, badger.ErrKeyNotFound) {
@@ -993,7 +1007,7 @@ func (chain *Blockchain) VerifyBlockTransactions(block *core.Block, externalCach
 
 // Iterator returns a BlockchainIterator
 func (chain *Blockchain) Iterator() *BlockchainIterator {
-	iter := &BlockchainIterator{chain.LastHash, chain.Database}
+	iter := &BlockchainIterator{chain.GetLastHash(), chain.Database}
 	return iter
 }
 

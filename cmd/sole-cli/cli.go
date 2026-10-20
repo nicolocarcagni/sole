@@ -453,7 +453,7 @@ func runInit(cmd *cobra.Command, args []string) {
 	utxoSet.Reindex()
 
 	fmt.Println("\n☀️  SOLE storage.Blockchain Initialized!")
-	fmt.Printf("- Genesis Hash: %x\n", chain.LastHash)
+	fmt.Printf("- Genesis Hash: %x\n", chain.GetLastHash())
 	fmt.Println("- Network: Unisalento Mainnet")
 	fmt.Println("- UTXO Set: Reindexed automatically.")
 	fmt.Println("- Run 'wallet create' or 'node start'.")
