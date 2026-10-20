@@ -156,9 +156,13 @@ func TestCalculateFee_RejectsSpentOutput(t *testing.T) {
 	utxo.Reindex()
 
 	// Sanity: coinbase UTXO should exist after Reindex.
-	cbKey := fmt.Sprintf("%s%s-%d", storage.UtxoPrefix, hex.EncodeToString(coinbaseTxID), 0)
-	if !keyExists(t, chain.Database, cbKey) {
-		t.Fatalf("setup: coinbase UTXO key %q not found after Reindex", cbKey)
+	coinbaseID := hex.EncodeToString(coinbaseTxID)
+	_, outputs, err := utxo.FindSpendableOutputs(ownerHash, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs[coinbaseID]) != 1 {
+		t.Fatalf("setup: coinbase UTXO %q not found after Reindex", coinbaseID)
 	}
 
 	// core.Block 2: spend the coinbase output
@@ -178,8 +182,12 @@ func TestCalculateFee_RejectsSpentOutput(t *testing.T) {
 	utxo.Update(block2)
 
 	// Sanity: UTXO key must be gone after Update.
-	if keyExists(t, chain.Database, cbKey) {
-		t.Fatalf("setup: coinbase UTXO key %q should be deleted after block2", cbKey)
+	_, outputs, err = utxo.FindSpendableOutputs(ownerHash, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outputs[coinbaseID]) != 0 {
+		t.Fatalf("setup: coinbase UTXO %q should be deleted after block2", coinbaseID)
 	}
 
 	// Craft a double-spend transaction referencing the already-spent output.
@@ -194,7 +202,7 @@ func TestCalculateFee_RejectsSpentOutput(t *testing.T) {
 		Timestamp: time.Now().Unix(),
 	}
 
-	_, err := utxo.CalculateFee(doubleSpendTx, map[string]core.MempoolItem{})
+	_, err = utxo.CalculateFee(doubleSpendTx, map[string]core.MempoolItem{})
 	if err == nil {
 		t.Fatalf("FAIL: CalculateFee should return an error for a spent output, got nil")
 	}

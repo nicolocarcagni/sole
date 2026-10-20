@@ -397,6 +397,8 @@ func (chain *Blockchain) AddBlock(block *core.Block, txCache ...map[string]core.
 // AddBlockWithUTXO stores a block and applies its effects to the UTXO index
 // only when the block changes the canonical tip. Block, tip, and UTXO writes
 // share one Badger transaction so readers cannot observe a partial transition.
+// Reorganization entries are staged before that transaction and activated with
+// the new tip in the same commit.
 // It returns false with no error when the block is rejected or already stored.
 func (chain *Blockchain) AddBlockWithUTXO(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) (bool, error) {
 	if utxo == nil || utxo.Blockchain != chain {
@@ -483,6 +485,45 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 		return false, nil
 	}
 
+	var stagedUTXOPrefix string
+	if utxo != nil {
+		var currentTipHash []byte
+		var currentTipHeight int
+		err = chain.Database.View(func(txn *badger.Txn) error {
+			item, err := txn.Get([]byte("lh"))
+			if err != nil {
+				return err
+			}
+			currentTipHash, err = item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			item, err = txn.Get(currentTipHash)
+			if err != nil {
+				return err
+			}
+			data, err := item.ValueCopy(nil)
+			if err != nil {
+				return err
+			}
+			currentTip := core.DeserializeBlock(data)
+			if currentTip == nil {
+				return errors.New("failed to decode current tip block")
+			}
+			currentTipHeight = currentTip.Height
+			return nil
+		})
+		if err != nil {
+			return false, fmt.Errorf("failed to read canonical tip before UTXO update: %w", err)
+		}
+		if block.Height > currentTipHeight && !bytes.Equal(block.PrevBlockHash, currentTipHash) {
+			stagedUTXOPrefix, err = utxo.stageReindex(block.Hash, block)
+			if err != nil {
+				return false, fmt.Errorf("failed to stage UTXO set after reorganization: %w", err)
+			}
+		}
+	}
+
 	var canonicalTip []byte
 	added := false
 	err = chain.Database.Update(func(txn *badger.Txn) error {
@@ -543,8 +584,10 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 					if err := utxo.updateInTransaction(txn, block); err != nil {
 						return fmt.Errorf("failed to update canonical UTXO set: %w", err)
 					}
-				} else if err := utxo.reindexInTransaction(txn, block.Hash); err != nil {
-					return fmt.Errorf("failed to rebuild UTXO set after reorganization: %w", err)
+				} else if stagedUTXOPrefix == "" {
+					return errors.New("missing staged UTXO set after reorganization")
+				} else if err := txn.Set([]byte(activeUTXOPrefixKey), []byte(stagedUTXOPrefix)); err != nil {
+					return fmt.Errorf("failed to activate UTXO set after reorganization: %w", err)
 				}
 			}
 		}
@@ -553,11 +596,17 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 	})
 
 	if err != nil {
+		if stagedUTXOPrefix != "" {
+			utxo.cleanupUTXOPrefix(stagedUTXOPrefix)
+		}
 		fmt.Printf("⛔ AddBlock: Failed to save block at height %d\n", block.Height)
 		return false, fmt.Errorf("failed to save block and update canonical state: %w", err)
 	}
 	if len(canonicalTip) > 0 {
 		chain.LastHash = append([]byte(nil), canonicalTip...)
+		if stagedUTXOPrefix != "" {
+			utxo.cleanupInactiveUTXOPrefixes(stagedUTXOPrefix)
+		}
 	}
 	return added, nil
 }

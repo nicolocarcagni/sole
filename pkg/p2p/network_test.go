@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"encoding/gob"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"testing"
 
@@ -152,16 +151,18 @@ func TestStartupRecoversInterruptedUTXOUpdate(t *testing.T) {
 		t.Fatalf("startup recovery failed: %v", err)
 	}
 
-	canonicalKey := []byte(storage.UtxoPrefix + hex.EncodeToString(tx.ID) + "-0")
-	if err := db.View(func(txn *badger.Txn) error {
-		if _, err := txn.Get(canonicalKey); err != nil {
-			return fmt.Errorf("canonical UTXO was not reconstructed: %w", err)
-		}
-		if _, err := txn.Get(staleKey); err != badger.ErrKeyNotFound {
-			return fmt.Errorf("stale UTXO remains after recovery: %v", err)
-		}
-		return nil
-	}); err != nil {
+	_, canonical, err := (&storage.UTXOSet{Blockchain: chain}).FindSpendableOutputs([]byte("canonical-owner"), 99)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if len(canonical[hex.EncodeToString(tx.ID)]) != 1 {
+		t.Fatal("canonical UTXO was not reconstructed")
+	}
+	_, stale, err := (&storage.UTXOSet{Blockchain: chain}).FindSpendableOutputs([]byte("stale-owner"), 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Fatal("stale UTXO remains after recovery")
 	}
 }

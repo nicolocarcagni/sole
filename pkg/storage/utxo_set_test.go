@@ -277,6 +277,123 @@ func TestStartupRecoversInterruptedUTXOUpdate(t *testing.T) {
 	}
 }
 
+func TestReindexFailurePreservesPreviousUTXO(t *testing.T) {
+	chain := newTestBlockchain(t)
+	oldOutput, err := SerializeUTXO(core.TxOutput{Value: 7, PubKeyHash: []byte("previous")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := chain.Database.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(UtxoPrefix+"previous-0"), oldOutput)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chain.LastHash = []byte("missing-canonical-block")
+
+	if err := (&UTXOSet{Blockchain: chain}).Reindex(); err == nil {
+		t.Fatal("expected reindex to fail when the canonical tip is missing")
+	}
+	if !keyExists(t, chain.Database, UtxoPrefix+"previous-0") {
+		t.Fatal("previous UTXO was removed after a failed reindex")
+	}
+}
+
+func TestReindexLargeChainInBatches(t *testing.T) {
+	chain := newTestBlockchain(t)
+	count := int(chain.Database.MaxBatchCount()) + 1
+	const transactionsPerBlock = 256
+	var parentHash []byte
+	for firstTx, height := 0, 1; firstTx < count; height++ {
+		endTx := firstTx + transactionsPerBlock
+		if endTx > count {
+			endTx = count
+		}
+		block := &core.Block{
+			Hash:          []byte(fmt.Sprintf("large-reindex-block-%04d", height)),
+			PrevBlockHash: append([]byte(nil), parentHash...),
+			Height:        height,
+			Transactions:  make([]*core.Transaction, endTx-firstTx),
+		}
+		for i := firstTx; i < endTx; i++ {
+			block.Transactions[i-firstTx] = &core.Transaction{
+				ID:   []byte(fmt.Sprintf("large-tx-%08d", i)),
+				Vout: []core.TxOutput{{Value: 1, PubKeyHash: []byte("large-owner")}},
+			}
+		}
+		serialized, err := block.Serialize()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := chain.Database.Update(func(txn *badger.Txn) error {
+			return txn.Set(block.Hash, serialized)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		parentHash = append(parentHash[:0], block.Hash...)
+		firstTx = endTx
+	}
+	if err := chain.Database.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte("lh"), parentHash)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chain.LastHash = append([]byte(nil), parentHash...)
+
+	utxo := &UTXOSet{Blockchain: chain}
+	if err := utxo.Reindex(); err != nil {
+		t.Fatalf("reindex failed for a chain larger than one Badger batch: %v", err)
+	}
+	got, err := utxo.CountTransactions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != count {
+		t.Fatalf("reindexed UTXO count = %d, want %d", got, count)
+	}
+}
+
+func TestReindexIsAtomic(t *testing.T) {
+	chain := newTestBlockchain(t)
+	oldOutput, err := SerializeUTXO(core.TxOutput{Value: 9, PubKeyHash: []byte("previous")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := chain.Database.Update(func(txn *badger.Txn) error {
+		if err := txn.Set([]byte(UtxoPrefix+"previous-0"), oldOutput); err != nil {
+			return err
+		}
+		block := &core.Block{
+			Hash:   []byte("atomic-reindex-tip"),
+			Height: 1,
+			Transactions: []*core.Transaction{{
+				ID:   bytes.Repeat([]byte{0xAB}, 65000),
+				Vout: []core.TxOutput{{Value: 1, PubKeyHash: []byte("new-owner")}},
+			}},
+		}
+		serialized, err := block.Serialize()
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(block.Hash, serialized); err != nil {
+			return err
+		}
+		return txn.Set([]byte("lh"), block.Hash)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	chain.LastHash = []byte("atomic-reindex-tip")
+
+	if err := (&UTXOSet{Blockchain: chain}).Reindex(); err == nil {
+		t.Fatal("expected reindex to fail when the rebuilt UTXO key exceeds Badger's limit")
+	}
+	if !keyExists(t, chain.Database, UtxoPrefix+"previous-0") {
+		t.Fatal("failed reindex exposed a partially replaced UTXO set")
+	}
+	if keyExists(t, chain.Database, UtxoPrefix+hex.EncodeToString(bytes.Repeat([]byte{0xAB}, 65000))+"-0") {
+		t.Fatal("failed reindex exposed an invalid replacement UTXO")
+	}
+}
+
 // writeBlockToDB serializes a block and writes it to BadgerDB under its hash,
 // also updating the "lh" (last-hash) key and the tx-<id> index.
 // It bypasses ForgeBlock / AddBlock's signature validation — safe for unit tests.
@@ -325,6 +442,17 @@ func keyExists(t *testing.T, db *badger.DB, k string) bool {
 	t.Helper()
 	found := false
 	err := db.View(func(txn *badger.Txn) error {
+		if strings.HasPrefix(k, UtxoPrefix) {
+			if item, err := txn.Get([]byte(activeUTXOPrefixKey)); err == nil {
+				prefix, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
+				k = string(prefix) + strings.TrimPrefix(k, UtxoPrefix)
+			} else if err != badger.ErrKeyNotFound {
+				return err
+			}
+		}
 		_, err := txn.Get([]byte(k))
 		if err == badger.ErrKeyNotFound {
 			return nil
@@ -346,6 +474,17 @@ func readUTXOValue(t *testing.T, db *badger.DB, k string) core.TxOutput {
 	t.Helper()
 	var out core.TxOutput
 	err := db.View(func(txn *badger.Txn) error {
+		if strings.HasPrefix(k, UtxoPrefix) {
+			if item, err := txn.Get([]byte(activeUTXOPrefixKey)); err == nil {
+				prefix, err := item.ValueCopy(nil)
+				if err != nil {
+					return err
+				}
+				k = string(prefix) + strings.TrimPrefix(k, UtxoPrefix)
+			} else if err != badger.ErrKeyNotFound {
+				return err
+			}
+		}
 		item, err := txn.Get([]byte(k))
 		if err != nil {
 			return fmt.Errorf("key %q not found: %w", k, err)
