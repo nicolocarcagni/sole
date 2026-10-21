@@ -482,24 +482,3 @@ func makeMinedBlock(t *testing.T, txs []*core.Transaction, prevHash []byte, heig
 	block := core.NewBlock(txs, prevHash, height, []byte("validator"))
 	return block
 }
-
-func keyExists(t *testing.T, db *badger.DB, k string) bool {
-	t.Helper()
-	var exists bool
-	err := db.View(func(txn *badger.Txn) error {
-		_, err := txn.Get([]byte(k))
-		if err == badger.ErrKeyNotFound {
-			exists = false
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		exists = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("keyExists check failed for %s: %v", k, err)
-	}
-	return exists
-}

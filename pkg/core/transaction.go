@@ -7,7 +7,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/gob"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -57,40 +56,11 @@ func NewTxOutput(value int64, address string) (*TxOutput, error) {
 	return txo, nil
 }
 
-type TxOutputs struct {
-	Outputs []TxOutput
-}
-
-func (outs TxOutputs) Serialize() ([]byte, error) {
-	var buff bytes.Buffer
-	enc := gob.NewEncoder(&buff)
-	err := enc.Encode(outs)
-	if err != nil {
-		return nil, fmt.Errorf("serialization failed: %w", err)
-	}
-	return buff.Bytes(), nil
-}
-
-func DeserializeOutputs(data []byte) (TxOutputs, error) {
-	var outputs TxOutputs
-	dec := gob.NewDecoder(bytes.NewReader(data))
-	err := dec.Decode(&outputs)
-	if err != nil {
-		return outputs, fmt.Errorf("deserialization failed: %w", err)
-	}
-	return outputs, nil
-}
-
 type TxInput struct {
 	Txid      []byte
 	Vout      int
 	Signature []byte
 	PubKey    []byte
-}
-
-func (in *TxInput) UsesKey(pubKeyHash []byte) bool {
-	lockingHash := HashPubKey(in.PubKey)
-	return bytes.Equal(lockingHash, pubKeyHash)
 }
 
 type Transaction struct {

@@ -5,8 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"golang.org/x/crypto/ripemd160"
-	"io"
-	"os"
 )
 
 func ExtractPubKeyHash(address string) ([]byte, error) {
@@ -31,45 +29,6 @@ func IntToHex(num int64) []byte {
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], uint64(num))
 	return b[:]
-}
-
-func CopyDir(src string, dst string) error {
-	var err error
-	fds, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	err = os.MkdirAll(dst, 0755)
-	if err != nil {
-		return err
-	}
-	for _, fd := range fds {
-		srcfp := src + "/" + fd.Name()
-		dstfp := dst + "/" + fd.Name()
-		if fd.IsDir() {
-			err = CopyDir(srcfp, dstfp)
-			if err != nil {
-				// fmt.Println(err)
-			}
-		} else {
-			in, err := os.Open(srcfp)
-			if err != nil {
-				return err
-			}
-			out, err := os.Create(dstfp)
-			if err != nil {
-				in.Close()
-				return err
-			}
-			_, err = io.Copy(out, in)
-			in.Close()
-			out.Close()
-			if err != nil {
-				return err
-			}
-		}
-	}
-	return nil
 }
 
 func HashPubKey(pubKey []byte) []byte {

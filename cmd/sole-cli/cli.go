@@ -822,7 +822,7 @@ func send(cmd *cobra.Command, args []string) {
 }
 
 func printChain(cmd *cobra.Command, args []string) {
-	chain, err := storage.ContinueBlockchain("")
+	chain, err := storage.ContinueBlockchain()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error continuing blockchain: %v\n", err)
 		os.Exit(1)
@@ -913,7 +913,7 @@ func listAddresses(cmd *cobra.Command, args []string) {
 }
 
 func reindexUTXO(cmd *cobra.Command, args []string) {
-	chain, err := storage.ContinueBlockchain("")
+	chain, err := storage.ContinueBlockchain()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error continuing blockchain: %v\n", err)
 		os.Exit(1)

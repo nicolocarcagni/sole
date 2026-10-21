@@ -74,11 +74,8 @@ type discoveryNotifee struct {
 func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	// 1. Filter Self-Address (Avoid Self-Dialing)
 	if pi.ID == n.h.ID() {
-		// fmt.Printf("DEBUG: Found self %s, skipping.\n", ShortID(pi.ID.String()))
 		return
 	}
-
-	// fmt.Printf("Peer discovered: %s\n", ShortID(pi.ID.String()))
 
 	err := n.h.Connect(context.Background(), pi)
 	if err != nil {
@@ -201,7 +198,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		bootnodesToUse = DefaultBootnodes
 	}
 
-	chain, err := storage.ContinueBlockchain("")
+	chain, err := storage.ContinueBlockchain()
 	if err != nil {
 		return nil, fmt.Errorf("failed to continue blockchain: %w", err)
 	}

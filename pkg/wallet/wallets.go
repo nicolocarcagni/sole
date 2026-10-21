@@ -84,10 +84,6 @@ func (ws *Wallets) RemoveWallet(address string) error {
 	return nil
 }
 
-func (ws *Wallets) GetWallet(address string) Wallet {
-	return *ws.Wallets[address]
-}
-
 func (ws *Wallets) GetWalletRef(address string) *Wallet {
 	return ws.Wallets[address]
 }

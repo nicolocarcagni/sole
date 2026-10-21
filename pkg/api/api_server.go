@@ -25,7 +25,25 @@ type RestServer struct {
 }
 
 func StartRestServer(server *p2p.Server, listenHost string, port int) {
-	rs := RestServer{P2P: server}
+	mempoolHub := NewEventHub()
+	go mempoolHub.Run()
+	blockHub := NewEventHub()
+	go blockHub.Run()
+
+	rs := RestServer{
+		P2P:        server,
+		MempoolHub: mempoolHub,
+		BlockHub:   blockHub,
+	}
+
+	if server != nil {
+		server.OnNewTx = func(tx *core.Transaction) {
+			BroadcastMempoolTx(mempoolHub, tx)
+		}
+		server.OnNewBlock = func(b *core.Block) {
+			BroadcastBlock(blockHub, b)
+		}
+	}
 
 	router := mux.NewRouter()
 	router.Use(commonMiddleware)
@@ -560,7 +578,7 @@ func (rs *RestServer) sendTx(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ── 5. Cryptographic Signature Verification ──────────────────────────────
-	if rs.P2P.Blockchain.VerifyTransactionWithMempool(&tx, mempoolSnapshot) == false {
+	if !rs.P2P.Blockchain.VerifyTransactionWithMempool(&tx, mempoolSnapshot) {
 		json.NewEncoder(w).Encode(ErrorResponse{Error: "core.Transaction invalid"})
 		return
 	}

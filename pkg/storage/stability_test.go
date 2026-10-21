@@ -20,7 +20,7 @@ func TestContinueBlockchain_NonExistent(t *testing.T) {
 		defer os.Rename(DbFile+"_backup", DbFile)
 	}
 
-	_, err := ContinueBlockchain("")
+	_, err := ContinueBlockchain()
 	if err != ErrBlockchainNotFound {
 		t.Fatalf("Expected ErrBlockchainNotFound, got %v", err)
 	}

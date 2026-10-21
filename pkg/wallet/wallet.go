@@ -17,8 +17,6 @@ import (
 	"github.com/nicolocarcagni/sole/pkg/core"
 )
 
-const ()
-
 type Wallet struct {
 	PrivateKey []byte // x509 Marshaled
 	PublicKey  []byte // Appended X and Y

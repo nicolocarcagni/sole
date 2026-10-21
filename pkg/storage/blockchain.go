@@ -24,13 +24,11 @@ const (
 var (
 	ErrBlockchainNotFound = errors.New("blockchain database does not exist")
 	ErrBlockchainExists   = errors.New("blockchain database already exists")
-	ErrBlockNotFound      = errors.New("block not found")
 )
 
 func GetBadgerOptions(path string) badger.Options {
 	opts := badger.DefaultOptions(path)
 	opts.Logger = nil
-	// opts.Truncate = true (Removed in v3)
 
 	opts.ValueLogFileSize = 16 << 20 // 16 MB max value log file size
 	opts.MemTableSize = 8 << 20      // 8 MB memtable
@@ -117,7 +115,7 @@ func InitBlockchain() (*Blockchain, error) {
 	return &blockchain, nil
 }
 
-func ContinueBlockchain(address string) (*Blockchain, error) {
+func ContinueBlockchain() (*Blockchain, error) {
 	if !DBExists() {
 		return nil, ErrBlockchainNotFound
 	}
@@ -125,72 +123,6 @@ func ContinueBlockchain(address string) (*Blockchain, error) {
 	var lastHash []byte
 	opts := badger.DefaultOptions(DbFile)
 	opts.Logger = nil
-
-	db, err := badger.Open(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	err = db.Update(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("lh"))
-		if err != nil {
-			return err
-		}
-		lastHash, err = item.ValueCopy(nil)
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve last block hash: %w", err)
-	}
-
-	chain := Blockchain{LastHash: lastHash, Database: db}
-	return &chain, nil
-}
-
-func ContinueBlockchainReadOnly(address string) (*Blockchain, error) {
-	if !DBExists() {
-		return nil, ErrBlockchainNotFound
-	}
-
-	var lastHash []byte
-	opts := badger.DefaultOptions(DbFile)
-	opts.Logger = nil
-	opts.ReadOnly = true
-
-	db, err := badger.Open(opts)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open database: %w", err)
-	}
-
-	err = db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte("lh"))
-		if err != nil {
-			return err
-		}
-		lastHash, err = item.ValueCopy(nil)
-		return err
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve last block hash (Read-Only): %w", err)
-	}
-
-	chain := Blockchain{LastHash: lastHash, Database: db}
-	return &chain, nil
-}
-
-func ContinueBlockchainSnapshot(customPath string) (*Blockchain, error) {
-	if _, err := os.Stat(customPath + "/MANIFEST"); os.IsNotExist(err) {
-		return nil, fmt.Errorf("snapshot DB corrupt or missing: %w", err)
-	}
-
-	var lastHash []byte
-	opts := badger.DefaultOptions(customPath)
-	opts.Logger = nil
-	// Memory optimizations
-	opts.ValueLogFileSize = 16 << 20
-	opts.MemTableSize = 8 << 20
-	opts.BlockCacheSize = 1 << 20
-	opts.NumVersionsToKeep = 1
 
 	db, err := badger.Open(opts)
 	if err != nil {
@@ -626,7 +558,6 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 }
 
 const (
-	MaxSupply       = core.MaxMoney
 	InitialSubsidy  = 10 * 100000000 // 10 SOLE
 	HalvingInterval = 195500         // Blocks
 )
@@ -647,52 +578,6 @@ func (chain *Blockchain) GetBlockSubsidy(height int) int64 {
 	}
 
 	return subsidy
-}
-
-// FindUnspentTransactions returns a list of transactions containing unspent outputs
-func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []core.Transaction {
-	var unspentTXs []core.Transaction
-	spentTXOs := make(map[string][]int)
-	iter := bc.Iterator()
-
-	for {
-		block, err := iter.Next()
-		if err != nil {
-			break
-		}
-
-		for _, tx := range block.Transactions {
-			txID := hex.EncodeToString(tx.ID)
-
-		Outputs:
-			for outIdx, out := range tx.Vout {
-				if spentTXOs[txID] != nil {
-					for _, spentOut := range spentTXOs[txID] {
-						if spentOut == outIdx {
-							continue Outputs
-						}
-					}
-				}
-
-				if out.IsLockedWithKey(pubKeyHash) {
-					unspentTXs = append(unspentTXs, *tx)
-				}
-			}
-
-			if tx.IsCoinbase() == false {
-				for _, vin := range tx.Vin {
-					inTxID := hex.EncodeToString(vin.Txid)
-					spentTXOs[inTxID] = append(spentTXOs[inTxID], vin.Vout)
-				}
-			}
-		}
-
-		if len(block.PrevBlockHash) == 0 {
-			break
-		}
-	}
-
-	return unspentTXs
 }
 
 // FindTransactions searches for all transactions related to an address
@@ -801,30 +686,6 @@ func (chain *Blockchain) FindUTXO() map[string]map[int]core.TxOutput {
 	return UTXO
 }
 
-// FindSpendableOutputs finds and returns unspent outputs to reference in inputs.
-// It uses FindUTXO() directly to guarantee only true UTXOs are iterated and
-// that returned indices match the canonical Vout positions in the transaction.
-func (chain *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int64) (int64, map[string][]int) {
-	unspentOutputs := make(map[string][]int)
-	accumulated := int64(0)
-	utxos := chain.FindUTXO()
-
-Work:
-	for txID, outs := range utxos {
-		for outIdx, out := range outs {
-			if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
-				accumulated += out.Value
-				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
-				if accumulated >= amount {
-					break Work
-				}
-			}
-		}
-	}
-
-	return accumulated, unspentOutputs
-}
-
 // FindTransaction finds a transaction by ID (Optimized with O(1) Index)
 func (chain *Blockchain) FindTransaction(ID []byte) (core.Transaction, error) {
 	// 1. Try to find using the O(1) core.Transaction Index
@@ -887,26 +748,6 @@ func (chain *Blockchain) SignTransaction(tx *core.Transaction, privKey ecdsa.Pri
 	}
 
 	return tx.Sign(privKey, prevTXs)
-}
-
-// VerifyTransaction verifies transaction input signatures (DB-only lookup)
-func (chain *Blockchain) VerifyTransaction(tx *core.Transaction) bool {
-	if tx.IsCoinbase() {
-		return true
-	}
-
-	prevTXs := make(map[string]core.Transaction)
-
-	for _, vin := range tx.Vin {
-		prevTX, err := chain.FindTransaction(vin.Txid)
-		if err != nil {
-			fmt.Printf("⛔ [VerifyTransaction] Rejected: Parent transaction %x does not exist.\n", vin.Txid)
-			return false
-		}
-		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
-	}
-
-	return tx.Verify(prevTXs)
 }
 
 // FindTransactionWithMempool checks the mempool first, then falls back to the blockchain DB.
