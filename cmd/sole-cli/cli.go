@@ -422,6 +422,7 @@ func startNode(cmd *cobra.Command, args []string) {
 	fmt.Println("\n⚠️  Stop signal received. Shutting down...")
 
 	// 1. Close P2P Host (Network)
+	server.Stop()
 	if err := server.Host.Close(); err != nil {
 		fmt.Printf("Error closing P2P Host: %s\n", err)
 	}

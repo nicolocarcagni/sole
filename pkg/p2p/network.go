@@ -53,6 +53,15 @@ const (
 	// MaxPeerMempoolTx is the maximum number of unconfirmed transactions
 	// that a single peer may have in the mempool simultaneously.
 	MaxPeerMempoolTx = 500
+
+	// DefaultMaxConcurrentStreams is the default ceiling for aggregate concurrent inbound streams.
+	DefaultMaxConcurrentStreams = 128
+
+	// DefaultMaxPeerConcurrentStreams is the default ceiling for concurrent inbound streams per peer.
+	DefaultMaxPeerConcurrentStreams = 8
+
+	// DefaultStreamTimeout is the default read deadline for inbound stream commands.
+	DefaultStreamTimeout = 2 * time.Minute
 )
 
 var (
@@ -80,6 +89,19 @@ type Server struct {
 	MempoolBytes        int
 	MempoolPeerBytes    map[string]int
 	MempoolPeerCount    map[string]int
+
+	MaxConcurrentStreams     int
+	MaxPeerConcurrentStreams int
+	StreamTimeout            time.Duration
+
+	streamMux     sync.Mutex
+	activeStreams int
+	peerStreams   map[peer.ID]int
+	openStreams   map[network.Stream]context.CancelFunc
+	streamWg      sync.WaitGroup
+	ctx           context.Context
+	cancel        context.CancelFunc
+	closed        bool
 
 	SyncingFrom    peer.ID             // Peer we are currently syncing from
 	IsSyncing      bool                // True while IBD is in progress
@@ -233,6 +255,7 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		return nil, err
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	server := &Server{
 		Host:             h,
 		Blockchain:       chain,
@@ -242,6 +265,10 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 		KnownPeers:       make(map[string]string),
 		Mempool:          make(map[string]core.MempoolItem),
 		BlockBuffer:      make(map[int]*core.Block),
+		peerStreams:      make(map[peer.ID]int),
+		openStreams:      make(map[network.Stream]context.CancelFunc),
+		ctx:              ctx,
+		cancel:           cancel,
 	}
 
 	// Set Stream Handler
@@ -337,17 +364,166 @@ func (s *Server) Bootstrap(bootnodes []string) {
 	}
 }
 
-// Start runs the P2P server loop (blocking)
+// Start runs the P2P server loop (blocking until server context is cancelled)
 func (s *Server) Start() {
 	fmt.Println("Waiting for connections...")
 
-	select {} // block forever
+	s.streamMux.Lock()
+	s.initStreamStateLocked()
+	if s.closed {
+		s.streamMux.Unlock()
+		return
+	}
+	ctx := s.ctx
+	s.streamMux.Unlock()
+
+	<-ctx.Done()
+}
+
+func (s *Server) maxConcurrentStreams() int {
+	if s.MaxConcurrentStreams > 0 {
+		return s.MaxConcurrentStreams
+	}
+	return DefaultMaxConcurrentStreams
+}
+
+func (s *Server) maxPeerConcurrentStreams() int {
+	if s.MaxPeerConcurrentStreams > 0 {
+		return s.MaxPeerConcurrentStreams
+	}
+	return DefaultMaxPeerConcurrentStreams
+}
+
+func (s *Server) streamTimeout() time.Duration {
+	if s.StreamTimeout > 0 {
+		return s.StreamTimeout
+	}
+	return DefaultStreamTimeout
+}
+
+func (s *Server) initStreamStateLocked() {
+	if s.peerStreams == nil {
+		s.peerStreams = make(map[peer.ID]int)
+	}
+	if s.openStreams == nil {
+		s.openStreams = make(map[network.Stream]context.CancelFunc)
+	}
+	if s.ctx == nil {
+		s.ctx, s.cancel = context.WithCancel(context.Background())
+	}
+}
+
+// ActiveStreams returns the number of currently active streams.
+func (s *Server) ActiveStreams() int {
+	s.streamMux.Lock()
+	defer s.streamMux.Unlock()
+	return s.activeStreams
+}
+
+// PeerStreams returns the number of active streams for a specific peer.
+func (s *Server) PeerStreams(peerID peer.ID) int {
+	s.streamMux.Lock()
+	defer s.streamMux.Unlock()
+	return s.peerStreams[peerID]
+}
+
+// Stop cancels all active streams and closes the server.
+func (s *Server) Stop() {
+	s.streamMux.Lock()
+	s.initStreamStateLocked()
+	if s.closed {
+		s.streamMux.Unlock()
+		return
+	}
+	s.closed = true
+	if s.cancel != nil {
+		s.cancel()
+	}
+	for st, cancel := range s.openStreams {
+		if cancel != nil {
+			cancel()
+		}
+		_ = st.Reset()
+	}
+	s.streamMux.Unlock()
+
+	s.streamWg.Wait()
 }
 
 func (s *Server) HandleStream(stream network.Stream) {
-	// Set a generous read deadline for large block transfers
-	stream.SetReadDeadline(time.Now().Add(2 * time.Minute))
-	go s.ReadData(stream, stream.Conn().RemotePeer())
+	if stream == nil {
+		return
+	}
+
+	var peerID peer.ID
+	if conn := stream.Conn(); conn != nil {
+		peerID = conn.RemotePeer()
+	}
+
+	s.streamMux.Lock()
+	s.initStreamStateLocked()
+
+	if s.closed || s.ctx.Err() != nil {
+		s.streamMux.Unlock()
+		_ = stream.Reset()
+		return
+	}
+
+	if s.activeStreams >= s.maxConcurrentStreams() {
+		s.streamMux.Unlock()
+		_ = stream.Reset()
+		log.Printf("⚠️  Dropping stream from %s: global concurrent stream limit reached (%d)", ShortID(peerID.String()), s.maxConcurrentStreams())
+		return
+	}
+
+	if s.peerStreams[peerID] >= s.maxPeerConcurrentStreams() {
+		s.streamMux.Unlock()
+		_ = stream.Reset()
+		log.Printf("⚠️  Dropping stream from %s: peer concurrent stream limit reached (%d)", ShortID(peerID.String()), s.maxPeerConcurrentStreams())
+		return
+	}
+
+	s.activeStreams++
+	s.peerStreams[peerID]++
+
+	timeout := s.streamTimeout()
+	streamCtx, streamCancel := context.WithTimeout(s.ctx, timeout)
+	s.openStreams[stream] = streamCancel
+	s.streamWg.Add(1)
+	s.streamMux.Unlock()
+
+	_ = stream.SetReadDeadline(time.Now().Add(timeout))
+
+	done := make(chan struct{})
+
+	go func() {
+		select {
+		case <-streamCtx.Done():
+			_ = stream.Reset()
+		case <-done:
+		}
+	}()
+
+	go func() {
+		defer func() {
+			close(done)
+			streamCancel()
+			_ = stream.Close()
+
+			s.streamMux.Lock()
+			s.activeStreams--
+			s.peerStreams[peerID]--
+			if s.peerStreams[peerID] <= 0 {
+				delete(s.peerStreams, peerID)
+			}
+			delete(s.openStreams, stream)
+			s.streamMux.Unlock()
+
+			s.streamWg.Done()
+		}()
+
+		s.ReadData(stream, peerID)
+	}()
 }
 
 func (s *Server) ReadData(stream network.Stream, peerID peer.ID) {
@@ -360,12 +536,14 @@ func (s *Server) ReadData(stream network.Stream, peerID peer.ID) {
 		if err != io.EOF {
 			log.Printf("Error reading length prefix from %s: %v", ShortID(peerID.String()), err)
 		}
+		_ = stream.Reset()
 		return
 	}
 
 	payloadLen := binary.BigEndian.Uint32(lenBuf)
 	if payloadLen == 0 || payloadLen > 8*1024*1024 { // 8MB safety cap
 		log.Printf("⚠️ Invalid payload length from %s: %d bytes. Dropping.", ShortID(peerID.String()), payloadLen)
+		_ = stream.Reset()
 		return
 	}
 
@@ -374,10 +552,12 @@ func (s *Server) ReadData(stream network.Stream, peerID peer.ID) {
 	_, err = io.ReadFull(stream, payload)
 	if err != nil {
 		log.Printf("Error reading payload (%d bytes) from %s: %v", payloadLen, ShortID(peerID.String()), err)
+		_ = stream.Reset()
 		return
 	}
 
 	if len(payload) < commandLength {
+		_ = stream.Reset()
 		return
 	}
 
