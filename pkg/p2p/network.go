@@ -37,6 +37,22 @@ const (
 	// memory. Transactions are rejected once this ceiling is reached to prevent
 	// memory-exhaustion (DoS) attacks.
 	MaxMempoolSize = 5000
+
+	// MaxTxMsgSize is the maximum allowed byte length for a raw transaction P2P message.
+	// It bounds the wire payload to prevent decoding oversized gob structures.
+	MaxTxMsgSize = core.MaxTxSize + 4096
+
+	// MaxMempoolBytes is the maximum aggregate byte size of transactions held in
+	// the mempool (10 MiB) to prevent memory saturation.
+	MaxMempoolBytes = 10 * 1024 * 1024
+
+	// MaxPeerMempoolBytes is the maximum aggregate byte size of transactions
+	// that a single peer may contribute to the mempool (2 MiB).
+	MaxPeerMempoolBytes = 2 * 1024 * 1024
+
+	// MaxPeerMempoolTx is the maximum number of unconfirmed transactions
+	// that a single peer may have in the mempool simultaneously.
+	MaxPeerMempoolTx = 500
 )
 
 var (
@@ -47,17 +63,23 @@ var (
 )
 
 type Server struct {
-	OnNewTx          func(*core.Transaction)
-	OnNewBlock       func(*core.Block)
-	Host             host.Host
-	Blockchain       *storage.Blockchain
-	UTXOSet          *storage.UTXOSet
-	MinerAddr        string
-	ValidatorPrivKey *ecdsa.PrivateKey
-	KnownPeers       map[string]string // PeerID string -> Addr
-	KnownPeersMux    sync.RWMutex
-	Mempool          map[string]core.MempoolItem
-	MempoolMux       sync.Mutex
+	OnNewTx             func(*core.Transaction)
+	OnNewBlock          func(*core.Block)
+	Host                host.Host
+	Blockchain          *storage.Blockchain
+	UTXOSet             *storage.UTXOSet
+	MinerAddr           string
+	ValidatorPrivKey    *ecdsa.PrivateKey
+	KnownPeers          map[string]string // PeerID string -> Addr
+	KnownPeersMux       sync.RWMutex
+	Mempool             map[string]core.MempoolItem
+	MempoolMux          sync.Mutex
+	MaxMempoolBytes     int
+	MaxPeerMempoolBytes int
+	MaxPeerMempoolTx    int
+	MempoolBytes        int
+	MempoolPeerBytes    map[string]int
+	MempoolPeerCount    map[string]int
 
 	SyncingFrom    peer.ID             // Peer we are currently syncing from
 	IsSyncing      bool                // True while IBD is in progress
@@ -603,7 +625,7 @@ func (s *Server) HandleBlock(request []byte, peerID peer.ID) (handleErr error) {
 		s.MempoolMux.Lock()
 		for _, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
-			delete(s.Mempool, txID)
+			s.removeFromMempoolLocked(txID)
 		}
 		s.MempoolMux.Unlock()
 	}
@@ -669,12 +691,141 @@ func (s *Server) applyBufferedBlocks() error {
 	return nil
 }
 
+func (s *Server) maxMempoolBytes() int {
+	if s.MaxMempoolBytes > 0 {
+		return s.MaxMempoolBytes
+	}
+	return MaxMempoolBytes
+}
+
+func (s *Server) maxPeerMempoolBytes() int {
+	if s.MaxPeerMempoolBytes > 0 {
+		return s.MaxPeerMempoolBytes
+	}
+	return MaxPeerMempoolBytes
+}
+
+func (s *Server) maxPeerMempoolTx() int {
+	if s.MaxPeerMempoolTx > 0 {
+		return s.MaxPeerMempoolTx
+	}
+	return MaxPeerMempoolTx
+}
+
+func (s *Server) currentMempoolBytesLocked() int {
+	if s.MempoolBytes > 0 || len(s.Mempool) == 0 {
+		return s.MempoolBytes
+	}
+	total := 0
+	for _, item := range s.Mempool {
+		total += item.Size()
+	}
+	s.MempoolBytes = total
+	return total
+}
+
+func (s *Server) currentPeerBytesLocked(peerID string) int {
+	if s.MempoolPeerBytes != nil {
+		if b, ok := s.MempoolPeerBytes[peerID]; ok {
+			return b
+		}
+	}
+	total := 0
+	for _, item := range s.Mempool {
+		if item.PeerID == peerID {
+			total += item.Size()
+		}
+	}
+	if s.MempoolPeerBytes == nil {
+		s.MempoolPeerBytes = make(map[string]int)
+	}
+	s.MempoolPeerBytes[peerID] = total
+	return total
+}
+
+func (s *Server) currentPeerTxCountLocked(peerID string) int {
+	if s.MempoolPeerCount != nil {
+		if count, ok := s.MempoolPeerCount[peerID]; ok {
+			return count
+		}
+	}
+	count := 0
+	for _, item := range s.Mempool {
+		if item.PeerID == peerID {
+			count++
+		}
+	}
+	if s.MempoolPeerCount == nil {
+		s.MempoolPeerCount = make(map[string]int)
+	}
+	s.MempoolPeerCount[peerID] = count
+	return count
+}
+
+func (s *Server) addToMempoolLocked(item core.MempoolItem) {
+	txID := hex.EncodeToString(item.Tx.ID)
+	if _, exists := s.Mempool[txID]; exists {
+		s.removeFromMempoolLocked(txID)
+	}
+	sz := item.Size()
+	s.Mempool[txID] = item
+	s.MempoolBytes = s.currentMempoolBytesLocked() + sz
+
+	if item.PeerID != "" {
+		if s.MempoolPeerBytes == nil {
+			s.MempoolPeerBytes = make(map[string]int)
+		}
+		s.MempoolPeerBytes[item.PeerID] = s.currentPeerBytesLocked(item.PeerID) + sz
+
+		if s.MempoolPeerCount == nil {
+			s.MempoolPeerCount = make(map[string]int)
+		}
+		s.MempoolPeerCount[item.PeerID] = s.currentPeerTxCountLocked(item.PeerID) + 1
+	}
+}
+
+func (s *Server) removeFromMempoolLocked(txID string) {
+	item, ok := s.Mempool[txID]
+	if !ok {
+		return
+	}
+	delete(s.Mempool, txID)
+	sz := item.Size()
+	s.MempoolBytes = s.currentMempoolBytesLocked() - sz
+	if s.MempoolBytes < 0 {
+		s.MempoolBytes = 0
+	}
+
+	if item.PeerID != "" {
+		if s.MempoolPeerBytes != nil {
+			s.MempoolPeerBytes[item.PeerID] -= sz
+			if s.MempoolPeerBytes[item.PeerID] <= 0 {
+				delete(s.MempoolPeerBytes, item.PeerID)
+			}
+		}
+		if s.MempoolPeerCount != nil {
+			s.MempoolPeerCount[item.PeerID]--
+			if s.MempoolPeerCount[item.PeerID] <= 0 {
+				delete(s.MempoolPeerCount, item.PeerID)
+			}
+		}
+	}
+}
+
 func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("⚡ Panic in HandleTx: %v", r)
 		}
 	}()
+
+	// ── 0. Pre-allocation Payload Boundary ──────────────────────────────────
+	// Reject raw wire payloads exceeding MaxTxMsgSize before allocating gob decoder.
+	if len(request) > MaxTxMsgSize {
+		fmt.Printf("⚠️  [HandleTx] Rejected oversized wire payload from %s: %d bytes (max %d)\n",
+			ShortID(peerID.String()), len(request), MaxTxMsgSize)
+		return
+	}
 
 	var payload TxMsg
 	dec := gob.NewDecoder(bytes.NewReader(request))
@@ -684,6 +835,12 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 
 	txData := payload.Transaction
+	if len(txData) > core.MaxTxSize {
+		fmt.Printf("⚠️  [HandleTx] Rejected oversized transaction from %s: %d bytes (max %d)\n",
+			ShortID(peerID.String()), len(txData), core.MaxTxSize)
+		return
+	}
+
 	tx, err := core.DeserializeTransaction(txData)
 	if err != nil {
 		log.Printf("Rejected malformed transaction from %s: %v", ShortID(peerID.String()), err)
@@ -726,6 +883,26 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		return
 	}
 
+	txSize := len(txData)
+	if s.currentMempoolBytesLocked()+txSize > s.maxMempoolBytes() {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool byte budget exceeded (%d + %d > %d)\n",
+			tx.ID, s.currentMempoolBytesLocked(), txSize, s.maxMempoolBytes())
+		return
+	}
+
+	peerKey := peerID.String()
+	if s.currentPeerBytesLocked(peerKey)+txSize > s.maxPeerMempoolBytes() {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool byte quota (%d + %d > %d)\n",
+			tx.ID, ShortID(peerKey), s.currentPeerBytesLocked(peerKey), txSize, s.maxPeerMempoolBytes())
+		return
+	}
+
+	if s.currentPeerTxCountLocked(peerKey) >= s.maxPeerMempoolTx() {
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool count quota (%d/%d)\n",
+			tx.ID, ShortID(peerKey), s.currentPeerTxCountLocked(peerKey), s.maxPeerMempoolTx())
+		return
+	}
+
 	// ── 4. Cryptographic Signature Verification ─────────────────────────────
 	// This MUST happen before CalculateFee to avoid leaking timing information
 	// or processing further DB lookups on an unverified transaction.
@@ -765,15 +942,24 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 
 	// ── 7. Admit & Relay ─────────────────────────────────────────────────────
 	fmt.Printf("New core.Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
-	s.Mempool[txID] = core.MempoolItem{Tx: tx, AddedAt: time.Now().Unix()}
+	item := core.MempoolItem{
+		Tx:       tx,
+		AddedAt:  time.Now().Unix(),
+		PeerID:   peerKey,
+		ByteSize: txSize,
+	}
+	s.addToMempoolLocked(item)
+
 	if s.OnNewTx != nil {
 		s.OnNewTx(&tx)
 	}
 
-	peers := s.Host.Network().Peers()
-	for _, p := range peers {
-		if p != peerID {
-			s.SendInv(p, "tx", [][]byte{tx.ID})
+	if s.Host != nil {
+		peers := s.Host.Network().Peers()
+		for _, p := range peers {
+			if p != peerID {
+				s.SendInv(p, "tx", [][]byte{tx.ID})
+			}
 		}
 	}
 }
@@ -828,10 +1014,10 @@ func (s *Server) AttemptMine() {
 				validTxs = append(validTxs, txWithFee{tx: &tx, fee: fee})
 			} else {
 				// Invalid fee (or dependencies missing)
-				delete(s.Mempool, id)
+				s.removeFromMempoolLocked(id)
 			}
 		} else {
-			delete(s.Mempool, id) // Clear invalid tx
+			s.removeFromMempoolLocked(id) // Clear invalid tx
 		}
 	}
 
@@ -878,7 +1064,7 @@ func (s *Server) AttemptMine() {
 				key := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
 				if claimer, exists := spentInputs[key]; exists {
 					fmt.Printf("  ↳ Evicted TX %s (conflicts with %s on input %s)\n", tid, claimer, key)
-					delete(s.Mempool, tid)
+					s.removeFromMempoolLocked(tid)
 					conflict = true
 					break
 				}
@@ -927,7 +1113,7 @@ func (s *Server) AttemptMine() {
 	// during mining or deferred due to block-size limits) are preserved.
 	for _, tx := range newBlock.Transactions {
 		if !tx.IsCoinbase() {
-			delete(s.Mempool, hex.EncodeToString(tx.ID))
+			s.removeFromMempoolLocked(hex.EncodeToString(tx.ID))
 		}
 	}
 

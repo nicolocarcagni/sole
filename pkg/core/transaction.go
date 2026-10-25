@@ -481,6 +481,18 @@ func NewCoinbaseTX(to, data string, amount int64) (*Transaction, error) {
 }
 
 type MempoolItem struct {
-	Tx      Transaction
-	AddedAt int64
+	Tx       Transaction
+	AddedAt  int64
+	PeerID   string
+	ByteSize int
+}
+
+// Size returns the byte size of the mempool item.
+// If ByteSize is explicitly recorded, it is returned; otherwise it falls back
+// to the serialized length of the transaction.
+func (item MempoolItem) Size() int {
+	if item.ByteSize > 0 {
+		return item.ByteSize
+	}
+	return len(item.Tx.Serialize())
 }

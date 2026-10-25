@@ -434,7 +434,7 @@ func TestHandleTx_RejectsWhenMempoolFull(t *testing.T) {
 
 func generateTestKeyPair() (ecdsa.PrivateKey, []byte) {
 	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	pubKey := append(priv.PublicKey.X.Bytes(), priv.PublicKey.Y.Bytes()...)
+	pubKey := elliptic.Marshal(elliptic.P256(), priv.PublicKey.X, priv.PublicKey.Y)
 	return *priv, pubKey
 }
 
@@ -481,4 +481,174 @@ func makeMinedBlock(t *testing.T, txs []*core.Transaction, prevHash []byte, heig
 	t.Helper()
 	block := core.NewBlock(txs, prevHash, height, []byte("validator"))
 	return block
+}
+
+func createTestSpendTx(t *testing.T, chain *storage.Blockchain, parentSuffix string, val int64, fee int64) *core.Transaction {
+	t.Helper()
+	privKey, pubKey := generateTestKeyPair()
+	pubKeyHash := core.HashPubKey(pubKey)
+
+	parentTxID := []byte("parent-txid-" + parentSuffix)
+	parentTx := &core.Transaction{
+		ID:  parentTxID,
+		Vin: []core.TxInput{{Txid: []byte{}, Vout: -1, PubKey: []byte("coinbase")}},
+		Vout: []core.TxOutput{
+			{Value: val + fee, PubKeyHash: pubKeyHash},
+		},
+		Timestamp: time.Now().Unix(),
+	}
+	parentKey := fmt.Sprintf("%s%s-%d", storage.UtxoPrefix, hex.EncodeToString(parentTxID), 0)
+	chain.Database.Update(func(txn *badger.Txn) error {
+		serialized, err := storage.SerializeUTXO(parentTx.Vout[0])
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte(parentKey), serialized)
+	})
+	block := makeMinedBlock(t, []*core.Transaction{parentTx}, chain.LastHash, 1)
+	chain.LastHash = block.Hash
+	writeBlockToDB(t, chain.Database, block)
+
+	spendTx := core.Transaction{
+		Vin:       []core.TxInput{{Txid: parentTxID, Vout: 0, PubKey: pubKey}},
+		Vout:      []core.TxOutput{{Value: val, PubKeyHash: pubKeyHash}},
+		Timestamp: time.Now().Unix(),
+	}
+	prevTXs := map[string]core.Transaction{hex.EncodeToString(parentTxID): *parentTx}
+	spendTx.Sign(privKey, prevTXs)
+	return &spendTx
+}
+
+// ---------------------------------------------------------------------------
+// [P1-03] Mempool Hardening & Byte Budget Tests
+// ---------------------------------------------------------------------------
+
+// TestMempoolRejectsOversizedTransaction verifies that:
+//  1. Raw wire messages exceeding MaxTxMsgSize are rejected immediately before
+//     allocating a gob decoder.
+//  2. Transaction payloads exceeding core.MaxTxSize are rejected before expensive
+//     deserialization or signature checks.
+func TestMempoolRejectsOversizedTransaction(t *testing.T) {
+	chain := newTestBlockchain(t)
+	utxo := &storage.UTXOSet{Blockchain: chain}
+	srv := makeMempoolServer(t, chain, utxo)
+
+	// 1. Raw wire payload exceeding MaxTxMsgSize
+	oversizedWire := make([]byte, MaxTxMsgSize+1)
+	srv.HandleTx(oversizedWire, peer.ID("peer-oversized-wire"))
+
+	srv.MempoolMux.Lock()
+	mLen1 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if mLen1 != 0 {
+		t.Fatalf("FAIL: oversized wire payload (%d bytes) should be rejected before decoding, mempool has %d items",
+			len(oversizedWire), mLen1)
+	}
+
+	// 2. Structurally valid gob message with oversized Transaction payload (> core.MaxTxSize)
+	oversizedTxData := make([]byte, core.MaxTxSize+1)
+	msg := TxMsg{
+		AddrFrom:    "peer-oversized",
+		Transaction: oversizedTxData,
+	}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
+		t.Fatalf("failed to encode test message: %v", err)
+	}
+
+	srv.HandleTx(buf.Bytes(), peer.ID("peer-oversized-tx"))
+
+	srv.MempoolMux.Lock()
+	mLen2 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if mLen2 != 0 {
+		t.Fatalf("FAIL: oversized transaction payload (%d bytes) should be rejected, mempool has %d items",
+			len(oversizedTxData), mLen2)
+	}
+}
+
+// TestMempoolEnforcesByteBudget verifies that transactions are rejected once the
+// mempool reaches its aggregate byte budget, even if the item count is below MaxMempoolSize.
+func TestMempoolEnforcesByteBudget(t *testing.T) {
+	chain := newTestBlockchain(t)
+	utxo := &storage.UTXOSet{Blockchain: chain}
+	srv := makeMempoolServer(t, chain, utxo)
+
+	tx1 := createTestSpendTx(t, chain, "budget-1", 1000, 10)
+	tx1Bytes := encodeTxMsg(t, tx1)
+
+	// Configure mempool budget to accommodate tx1 but reject subsequent transactions
+	srv.MaxMempoolBytes = len(tx1.Serialize()) + 10
+
+	// tx1 should be admitted
+	srv.HandleTx(tx1Bytes, peer.ID("peer-1"))
+
+	srv.MempoolMux.Lock()
+	lenAfter1 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if lenAfter1 != 1 {
+		t.Fatalf("FAIL: tx1 should have been admitted to mempool, got %d items", lenAfter1)
+	}
+
+	// tx2 is a valid independent transaction that would fit if only count was checked,
+	// but exceeds the remaining byte budget.
+	tx2 := createTestSpendTx(t, chain, "budget-2", 2000, 20)
+	tx2Bytes := encodeTxMsg(t, tx2)
+
+	srv.HandleTx(tx2Bytes, peer.ID("peer-2"))
+
+	srv.MempoolMux.Lock()
+	lenAfter2 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if lenAfter2 != 1 {
+		t.Fatalf("FAIL: tx2 should have been rejected due to mempool byte budget exhaustion, but mempool size is %d", lenAfter2)
+	}
+}
+
+// TestPeerCannotExceedMempoolQuota verifies that an individual peer cannot exceed
+// its quota of mempool memory or transaction count, preventing single-peer starvation.
+func TestPeerCannotExceedMempoolQuota(t *testing.T) {
+	chain := newTestBlockchain(t)
+	utxo := &storage.UTXOSet{Blockchain: chain}
+	srv := makeMempoolServer(t, chain, utxo)
+
+	peerA := peer.ID("peer-attacker-quota")
+	peerB := peer.ID("peer-honest-user")
+
+	txA1 := createTestSpendTx(t, chain, "peer-quota-a1", 1000, 10)
+	txA2 := createTestSpendTx(t, chain, "peer-quota-a2", 2000, 10)
+	txB1 := createTestSpendTx(t, chain, "peer-quota-b1", 3000, 10)
+
+	// Set peer quota to only allow one transaction's worth of bytes from peerA
+	srv.MaxPeerMempoolBytes = len(txA1.Serialize()) + 10
+
+	// Peer A submits txA1 -> should succeed
+	srv.HandleTx(encodeTxMsg(t, txA1), peerA)
+
+	srv.MempoolMux.Lock()
+	lenAfterA1 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if lenAfterA1 != 1 {
+		t.Fatalf("FAIL: txA1 should be admitted, mempool has %d items", lenAfterA1)
+	}
+
+	// Peer A attempts to submit txA2 -> should be rejected because peerA exceeded quota
+	srv.HandleTx(encodeTxMsg(t, txA2), peerA)
+
+	srv.MempoolMux.Lock()
+	lenAfterA2 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if lenAfterA2 != 1 {
+		t.Fatalf("FAIL: txA2 should be rejected due to peer quota exhaustion, mempool has %d items", lenAfterA2)
+	}
+
+	// Peer B submits txB1 -> should be admitted because Peer B has not exceeded quota
+	srv.HandleTx(encodeTxMsg(t, txB1), peerB)
+
+	srv.MempoolMux.Lock()
+	lenAfterB1 := len(srv.Mempool)
+	srv.MempoolMux.Unlock()
+	if lenAfterB1 != 2 {
+		t.Fatalf("FAIL: txB1 from Peer B should be admitted, mempool has %d items", lenAfterB1)
+	}
 }
