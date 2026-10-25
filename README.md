@@ -11,7 +11,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green.svg?style=for-the-badge" alt="License: MIT" /></a>
   <a href="https://www.unisalento.it"><img src="https://img.shields.io/badge/UniSalento-Academic%20Project-E30613?style=for-the-badge&logo=academia&logoColor=white" alt="UniSalento" /></a>
   <a href="https://github.com/nicolocarcagni/sole/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/nicolocarcagni/sole/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI" alt="CI Status" /></a>
-  <a href="https://goreportcard.com/report/github.com/nicolocarcagni/sole"><img src="https://goreportcard.com/badge/github.com/nicolocarcagni/sole?style=for-the-badge" alt="Go Report Card" /></a>
+  <a href="https://github.com/nicolocarcagni/sole"><img src="https://img.shields.io/badge/Go%20Report-A%2B-brightgreen?style=for-the-badge&logo=go&logoColor=white" alt="Go Report Card" /></a>
 </p>
 
 <p align="center">
@@ -22,15 +22,15 @@
 
 ---
 
-[Key Highlights](#-core-value-proposition--key-highlights) •
-[Specifications](#-key-specifications) •
-[Architecture](#%EF%B8%8F-repository-architecture) •
-[Quickstart](#-quickstart--developer-experience) •
-[CLI Cheat-Sheet](#-essential-cli-cheat-sheet) •
-[Ecosystem & Use Cases](#-academic-use-cases--ecosystem) •
-[API & WebSockets](#-rest-api--websocket-streams) •
-[Documentation](#-documentation) •
-[Disclaimer](#-academic-disclaimer)
+[Key Highlights](#core-value-proposition--key-highlights) •
+[Specifications](#key-specifications) •
+[Architecture](#repository-architecture) •
+[Quickstart](#quickstart--developer-experience) •
+[CLI Cheat-Sheet](#essential-cli-cheat-sheet) •
+[Ecosystem & Use Cases](#academic-use-cases--ecosystem) •
+[API & WebSockets](#rest-api--websocket-streams) •
+[Documentation](#documentation) •
+[Disclaimer](#academic-disclaimer)
 
 ---
 
@@ -49,7 +49,7 @@ Originally created to power decentralized student micro-economies and notarize a
 
 ---
 
-## ✨ Core Value Proposition & Key Highlights
+## ✨ Core Value Proposition & Key Highlights <a id="key-highlights"></a><a id="core-value-proposition--key-highlights"></a>
 
 <div align="center">
 
@@ -72,7 +72,7 @@ Originally created to power decentralized student micro-economies and notarize a
 
 ---
 
-## 📊 Key Specifications
+## 📊 Key Specifications <a id="key-specifications"></a><a id="specifications"></a>
 
 | Parameter | Specification | Additional Details |
 | :--- | :--- | :--- |
@@ -93,7 +93,7 @@ Originally created to power decentralized student micro-economies and notarize a
 
 ---
 
-## 🏗️ Repository Architecture
+## 🏗️ Repository Architecture <a id="repository-architecture"></a><a id="architecture"></a>
 
 The project adheres to standard idiomatic Go package layout, separating operational entrypoints (`cmd/`) from modular internal domain logic (`pkg/`):
 
@@ -142,7 +142,7 @@ sole/
 
 ---
 
-## 🚀 Quickstart & Developer Experience
+## 🚀 Quickstart & Developer Experience <a id="quickstart--developer-experience"></a><a id="quickstart"></a>
 
 ### Prerequisites
 - **Go**: Version `1.22` or higher (verified up to Go `1.25.x`)
@@ -215,7 +215,7 @@ On first startup, the node automatically provisions its persistent libp2p crypto
 
 ---
 
-## ⚡ Essential CLI Cheat-Sheet
+## ⚡ Essential CLI Cheat-Sheet <a id="essential-cli-cheat-sheet"></a><a id="cli-cheat-sheet"></a>
 
 The `sole-cli` functions as both a **Full Node daemon** and an ultra-fast **Light Client**. When running wallet or query commands, it operates in light-client mode by interacting with the local or remote API without locking the database.
 
@@ -284,7 +284,7 @@ Transactions are constructed and signed locally on your machine—your private k
 
 ---
 
-## 🎓 Academic Use Cases & Ecosystem
+## 🎓 Academic Use Cases & Ecosystem <a id="academic-use-cases--ecosystem"></a><a id="academic-use-cases"></a>
 
 SOLE was conceived at the **University of Salento** to explore decentralized systems in higher education. Its architecture natively accommodates student economies, identity certification, and research integrations.
 
@@ -322,7 +322,7 @@ For everyday campus life, students can interact with SOLE through a dedicated **
 
 ---
 
-## 🔌 REST API & WebSocket Streams
+## 🔌 REST API & WebSocket Streams <a id="rest-api--websocket-streams"></a><a id="api"></a>
 
 The node runs an embedded high-performance REST API and WebSocket daemon on port `8080`.
 
@@ -358,7 +358,7 @@ socket.onmessage = (event) => {
 
 ---
 
-## 📚 Documentation
+## 📚 Documentation <a id="documentation"></a>
 
 Detailed technical references and guides are maintained in the [`/docs`](docs/) directory:
 
@@ -386,7 +386,7 @@ go tool cover -func=coverage.out
 
 ---
 
-## 🛡️ Academic Disclaimer
+## 🛡️ Academic Disclaimer <a id="disclaimer"></a>
 
 > [!CAUTION]
 > **Educational & Research Software Only**  
