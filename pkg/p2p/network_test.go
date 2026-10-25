@@ -67,6 +67,7 @@ func TestHandleBlockPropagatesUTXOError(t *testing.T) {
 
 	chain := &storage.Blockchain{LastHash: append([]byte(nil), genesis.Hash...), Database: db}
 	block := core.NewBlock(nil, genesis.Hash, genesis.Height+1, validator)
+	block.Timestamp = genesis.Timestamp + 1
 	consensus.MineBlock(block)
 	if err := consensus.SignBlock(block, *key); err != nil {
 		t.Fatal(err)
