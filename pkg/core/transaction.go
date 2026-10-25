@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"time"
 )
@@ -176,8 +177,14 @@ func DeserializeTransaction(data []byte) (Transaction, error) {
 		if err := binary.Read(reader, binary.BigEndian, &vout); err != nil {
 			return tx, fmt.Errorf("read output index: %w", err)
 		}
-		if int64(int(vout)) != vout {
+		if vout < 0 {
+			if !(inputsCount == 1 && len(vin.Txid) == 0 && vout == -1) {
+				return tx, fmt.Errorf("invalid output index %d: cannot be negative", vout)
+			}
+		} else if vout > math.MaxInt32 || int64(int(vout)) != vout {
 			return tx, fmt.Errorf("output index %d overflows int", vout)
+		} else if vout >= MaxTxOutputs {
+			return tx, fmt.Errorf("output index %d exceeds maximum allowed outputs %d", vout, MaxTxOutputs)
 		}
 		vin.Vout = int(vout)
 
@@ -307,9 +314,13 @@ func (tx *Transaction) Sign(privKey ecdsa.PrivateKey, prevTXs map[string]Transac
 		return nil
 	}
 
-	for _, vin := range tx.Vin {
-		if prevTXs[hex.EncodeToString(vin.Txid)].ID == nil {
+	for inID, vin := range tx.Vin {
+		prevTx, exists := prevTXs[hex.EncodeToString(vin.Txid)]
+		if !exists || prevTx.ID == nil {
 			return fmt.Errorf("skipped input: previous transaction %x not found in context", vin.Txid)
+		}
+		if vin.Vout < 0 || vin.Vout >= len(prevTx.Vout) {
+			return fmt.Errorf("input %d references invalid output index %d (previous transaction has %d outputs)", inID, vin.Vout, len(prevTx.Vout))
 		}
 	}
 
@@ -360,9 +371,14 @@ func (tx *Transaction) Verify(prevTXs map[string]Transaction) bool {
 		return false
 	}
 
-	for _, vin := range tx.Vin {
-		if prevTXs[hex.EncodeToString(vin.Txid)].ID == nil {
+	for inID, vin := range tx.Vin {
+		prevTx, exists := prevTXs[hex.EncodeToString(vin.Txid)]
+		if !exists || prevTx.ID == nil {
 			fmt.Printf("ERROR: Previous transaction is not correct\n")
+			return false
+		}
+		if vin.Vout < 0 || vin.Vout >= len(prevTx.Vout) {
+			fmt.Printf("⛔ ERROR: Input %d references invalid output index %d (previous transaction has %d outputs)\n", inID, vin.Vout, len(prevTx.Vout))
 			return false
 		}
 	}

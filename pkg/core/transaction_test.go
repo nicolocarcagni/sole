@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"math"
 	"math/big"
 	"strings"
 	"testing"
@@ -409,5 +410,134 @@ func TestDeserializeTransactionChecksSizeBeforeAllocation(t *testing.T) {
 		t.Fatal("expected error when declared outputs count exceeds available stream bytes, got nil")
 	} else if !strings.Contains(err.Error(), "insufficient data for") {
 		t.Fatalf("expected error mentioning insufficient data before allocation, got: %v", err)
+	}
+}
+
+func TestDeserializeRejectsNegativeVout(t *testing.T) {
+	// 1. Transaction with a standard input having negative Vout (e.g. -1 with non-empty Txid)
+	tx := Transaction{
+		Vin: []TxInput{{
+			Txid:      []byte{0x01},
+			Vout:      -1,
+			Signature: []byte{0x02},
+			PubKey:    []byte{0x03},
+		}},
+		Vout:      []TxOutput{{Value: 50, PubKeyHash: []byte{0xaa}}},
+		Timestamp: time.Now().Unix(),
+	}
+	serialized := tx.Serialize()
+	if _, err := DeserializeTransaction(serialized); err == nil {
+		t.Fatal("expected error for transaction input with negative vout, got nil")
+	}
+
+	// 2. Transaction with input Vout < -1 even with empty Txid
+	txNegative := Transaction{
+		Vin: []TxInput{{
+			Txid:      []byte{},
+			Vout:      -2,
+			Signature: []byte{0x02},
+			PubKey:    []byte{0x03},
+		}},
+		Vout:      []TxOutput{{Value: 50, PubKeyHash: []byte{0xaa}}},
+		Timestamp: time.Now().Unix(),
+	}
+	if _, err := DeserializeTransaction(txNegative.Serialize()); err == nil {
+		t.Fatal("expected error for transaction input with vout < -1, got nil")
+	}
+}
+
+func TestDeserializeRejectsVoutOverflow(t *testing.T) {
+	// 1. Raw payload where Vout exceeds math.MaxInt32 (e.g. math.MaxInt32 + 1)
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.BigEndian, int64(1))               // 1 input
+	binary.Write(&buf, binary.BigEndian, int64(32))              // Txid len
+	buf.Write(make([]byte, 32))                                  // Txid
+	binary.Write(&buf, binary.BigEndian, int64(math.MaxInt32)+1) // Vout
+	binary.Write(&buf, binary.BigEndian, int64(0))               // Signature len
+	binary.Write(&buf, binary.BigEndian, int64(0))               // PubKey len
+	binary.Write(&buf, binary.BigEndian, int64(1))               // 1 output
+	binary.Write(&buf, binary.BigEndian, int64(10))              // Value
+	binary.Write(&buf, binary.BigEndian, int64(20))              // PubKeyHash len
+	buf.Write(make([]byte, 20))
+	binary.Write(&buf, binary.BigEndian, int64(1)) // Timestamp
+
+	if _, err := DeserializeTransaction(buf.Bytes()); err == nil {
+		t.Fatal("expected error for transaction with Vout exceeding math.MaxInt32, got nil")
+	}
+
+	// 2. Raw payload with Vout = math.MaxInt64
+	var bufMax bytes.Buffer
+	binary.Write(&bufMax, binary.BigEndian, int64(1))
+	binary.Write(&bufMax, binary.BigEndian, int64(32))
+	bufMax.Write(make([]byte, 32))
+	binary.Write(&bufMax, binary.BigEndian, int64(math.MaxInt64))
+	binary.Write(&bufMax, binary.BigEndian, int64(0))
+	binary.Write(&bufMax, binary.BigEndian, int64(0))
+	binary.Write(&bufMax, binary.BigEndian, int64(1))
+	binary.Write(&bufMax, binary.BigEndian, int64(10))
+	binary.Write(&bufMax, binary.BigEndian, int64(20))
+	bufMax.Write(make([]byte, 20))
+	binary.Write(&bufMax, binary.BigEndian, int64(1))
+
+	if _, err := DeserializeTransaction(bufMax.Bytes()); err == nil {
+		t.Fatal("expected error for transaction with Vout = math.MaxInt64, got nil")
+	}
+}
+
+func TestSignVerifyRejectOutOfRangeVout(t *testing.T) {
+	privKey, pubKey := generateTestKeyPair()
+	pubKeyHash := HashPubKey(pubKey)
+
+	prevTxID, _ := hex.DecodeString("0000000000000000000000000000000000000000000000000000000000000005")
+	prevTx := Transaction{
+		ID: prevTxID,
+		Vout: []TxOutput{
+			{Value: 100, PubKeyHash: pubKeyHash}, // only 1 output: index 0
+		},
+	}
+	prevTXs := map[string]Transaction{
+		hex.EncodeToString(prevTxID): prevTx,
+	}
+
+	// Test 1: Vout >= len(prevTx.Vout) (Vout = 1, but len is 1)
+	txOutOfRange := Transaction{
+		Vin: []TxInput{
+			{Txid: prevTxID, Vout: 1, PubKey: pubKey},
+		},
+		Vout: []TxOutput{
+			{Value: 50, PubKeyHash: pubKeyHash},
+		},
+		Timestamp: time.Now().Unix(),
+	}
+
+	// Sign should safely return an error rather than panicking with slice bounds out of range
+	err := txOutOfRange.Sign(privKey, prevTXs)
+	if err == nil {
+		t.Fatal("expected Sign to return an error for Vout >= len(prevTx.Vout), got nil")
+	}
+
+	// Verify should safely return false rather than panicking
+	if txOutOfRange.Verify(prevTXs) {
+		t.Fatal("expected Verify to return false for Vout >= len(prevTx.Vout), got true")
+	}
+
+	// Test 2: Negative Vout on non-coinbase transaction (Vout = -1)
+	txNegativeVout := Transaction{
+		Vin: []TxInput{
+			{Txid: prevTxID, Vout: -1, PubKey: pubKey},
+		},
+		Vout: []TxOutput{
+			{Value: 50, PubKeyHash: pubKeyHash},
+		},
+		Timestamp: time.Now().Unix(),
+	}
+
+	err = txNegativeVout.Sign(privKey, prevTXs)
+	if err == nil {
+		t.Fatal("expected Sign to return an error for negative Vout, got nil")
+	}
+
+	if txNegativeVout.Verify(prevTXs) {
+		t.Fatal("expected Verify to return false for negative Vout, got true")
 	}
 }
