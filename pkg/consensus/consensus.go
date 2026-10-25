@@ -124,18 +124,25 @@ func VerifyBlockSignature(block *core.Block) bool {
 const (
 	// DriftTolerance is the allowed time difference for block timestamp
 	DriftTolerance = 1 * time.Minute
-	// TargetZeros enforces a minimal PoW to prevent spamming
+	// DefaultDifficulty is the number of leading zero bytes required for new blocks.
+	DefaultDifficulty uint8 = core.DefaultDifficulty
+	// TargetZeros is retained for callers that use the original default PoW target.
 	TargetZeros = 1
+	// MaxDifficulty bounds consensus work calculation and prevents impossible targets.
+	MaxDifficulty uint8 = 8
 )
 
 func MineBlock(block *core.Block) {
 	fmt.Printf("⛏️  Mining block %d... ", block.Height)
+	if block.Difficulty == 0 {
+		block.Difficulty = DefaultDifficulty
+	}
 	block.Nonce = 0
 
 	for {
 		block.SetHash()
 		// Check difficulty
-		if CheckProofOfWork(block.Hash) {
+		if CheckProofOfWork(block.Hash, block.Difficulty) {
 			break
 		}
 		block.Nonce++
@@ -143,12 +150,15 @@ func MineBlock(block *core.Block) {
 	fmt.Printf("Done! Nonce: %d\n", block.Nonce)
 }
 
-func CheckProofOfWork(hash []byte) bool {
-	// Simple check: First byte must be 0
-	if len(hash) < TargetZeros {
+func CheckProofOfWork(hash []byte, difficulty ...uint8) bool {
+	target := DefaultDifficulty
+	if len(difficulty) > 0 {
+		target = difficulty[0]
+	}
+	if target == 0 || target > MaxDifficulty || len(hash) < int(target) {
 		return false
 	}
-	for i := 0; i < TargetZeros; i++ {
+	for i := 0; i < int(target); i++ {
 		if hash[i] != 0x00 {
 			return false
 		}
@@ -156,7 +166,18 @@ func CheckProofOfWork(hash []byte) bool {
 	return true
 }
 
+// BlockWork returns the expected work represented by a valid block difficulty.
+func BlockWork(difficulty uint8) (*big.Int, error) {
+	if difficulty == 0 || difficulty > MaxDifficulty {
+		return nil, fmt.Errorf("difficulty %d is outside the supported range", difficulty)
+	}
+	return new(big.Int).Lsh(big.NewInt(1), uint(difficulty)*8), nil
+}
+
 func ValidateBlockHeader(block *core.Block, prevBlock *core.Block) error {
+	if block.Difficulty == 0 || block.Difficulty > MaxDifficulty {
+		return fmt.Errorf("invalid block difficulty: %d", block.Difficulty)
+	}
 	// 0. Strict Hash Verification — the stored hash must equal the recomputed hash.
 	// This is the primary defence against header malleability: any tampered field
 	// (Validator, transactions, Nonce, Timestamp, Height, PrevBlockHash) will
@@ -178,7 +199,7 @@ func ValidateBlockHeader(block *core.Block, prevBlock *core.Block) error {
 	}
 
 	// 3. Anti-Spam (Proof of Work) — checked against the verified hash.
-	if !CheckProofOfWork(block.Hash) {
+	if !CheckProofOfWork(block.Hash, block.Difficulty) {
 		return fmt.Errorf("invalid PoA Proof-of-Work (Hash: %x)", block.Hash)
 	}
 

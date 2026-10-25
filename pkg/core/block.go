@@ -8,12 +8,15 @@ import (
 	"time"
 )
 
+const DefaultDifficulty uint8 = 1
+
 type Block struct {
 	Timestamp     int64
 	Transactions  []*Transaction
 	PrevBlockHash []byte
 	Hash          []byte
 	Height        int
+	Difficulty    uint8  // Number of required leading zero bytes in the block hash.
 	Nonce         int    // PoA Anti-Spam
 	Validator     []byte // Public key of the block validator (64 bytes)
 	Signature     []byte // ECDSA signature of the block hash (64 bytes)
@@ -45,6 +48,7 @@ func (b *Block) CalculateHash() []byte {
 			merkleRoot,
 			IntToHex(b.Timestamp),
 			IntToHex(int64(b.Height)),
+			[]byte{b.Difficulty},
 			IntToHex(int64(b.Nonce)),
 			b.Validator,
 		},
@@ -80,6 +84,7 @@ func NewBlock(transactions []*Transaction, prevBlockHash []byte, height int, val
 		PrevBlockHash: prevBlockHash,
 		Hash:          []byte{},
 		Height:        height,
+		Difficulty:    DefaultDifficulty,
 		Nonce:         0,
 		Validator:     validator,
 	}

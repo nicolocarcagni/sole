@@ -90,7 +90,7 @@ func makeSignedCoinbaseBlock(t *testing.T, key *ecdsa.PrivateKey, parent *core.B
 	return block
 }
 
-func TestSideBranchDoesNotChangeUTXO(t *testing.T) {
+func TestEqualWorkForkUpdatesUTXOByDeterministicTieBreak(t *testing.T) {
 	chain, utxo, key := setupCanonicalUTXOTest(t)
 	genesis, err := chain.GetBlock(chain.LastHash)
 	if err != nil {
@@ -105,14 +105,20 @@ func TestSideBranchDoesNotChangeUTXO(t *testing.T) {
 		t.Fatal("failed to store valid side-branch block")
 	}
 
-	if !keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString([]byte("main-branch-tx")))) {
-		t.Fatal("canonical branch UTXO disappeared")
+	wantCanonical, orphaned := main, side
+	if bytes.Compare(side.Hash, main.Hash) < 0 {
+		wantCanonical, orphaned = side, main
 	}
-	if keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString([]byte("side-branch-tx")))) {
-		t.Fatal("side-branch UTXO was added")
+	canonicalTxID := wantCanonical.Transactions[0].ID
+	orphanedTxID := orphaned.Transactions[0].ID
+	if !keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString(canonicalTxID))) {
+		t.Fatal("deterministically selected branch UTXO is missing")
 	}
-	if !bytes.Equal(chain.LastHash, main.Hash) {
-		t.Fatal("side branch changed the canonical tip")
+	if keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString(orphanedTxID))) {
+		t.Fatal("orphaned branch UTXO polluted canonical state")
+	}
+	if !bytes.Equal(chain.LastHash, wantCanonical.Hash) {
+		t.Fatal("equal-work fork did not use the deterministic tie-break")
 	}
 }
 
@@ -168,14 +174,18 @@ func TestEqualHeightForkKeepsConsistentState(t *testing.T) {
 	if added, err := chain.AddBlockWithUTXO(equal, utxo); err != nil || !added {
 		t.Fatal("failed to store equal-height fork")
 	}
-	if !bytes.Equal(chain.LastHash, main.Hash) {
-		t.Fatal("equal-height fork changed the canonical tip")
+	wantCanonical, orphaned := main, equal
+	if bytes.Compare(equal.Hash, main.Hash) < 0 {
+		wantCanonical, orphaned = equal, main
 	}
-	if !keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString([]byte("equal-main")))) {
+	if !bytes.Equal(chain.LastHash, wantCanonical.Hash) {
+		t.Fatal("equal-height fork did not use the deterministic tie-break")
+	}
+	if !keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString(wantCanonical.Transactions[0].ID))) {
 		t.Fatal("canonical UTXO missing after equal-height fork")
 	}
-	if keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString([]byte("equal-fork")))) {
-		t.Fatal("equal-height fork UTXO polluted canonical state")
+	if keyExists(t, chain.Database, fmt.Sprintf("%s%s-0", UtxoPrefix, hex.EncodeToString(orphaned.Transactions[0].ID))) {
+		t.Fatal("orphaned equal-height fork UTXO polluted canonical state")
 	}
 }
 

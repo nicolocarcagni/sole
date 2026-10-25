@@ -3,10 +3,12 @@ package storage
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"runtime"
 	"sync"
@@ -104,6 +106,9 @@ func InitBlockchain() (*Blockchain, error) {
 		}
 
 		err = txn.Set([]byte("lh"), genesis.Hash)
+		if err == nil {
+			err = txn.Set(cumulativeWorkKey(genesis.Hash), encodeWork(new(big.Int)))
+		}
 		lastHash = genesis.Hash
 		return err
 	})
@@ -172,6 +177,77 @@ func (chain *Blockchain) updateDatabase(update func(*badger.Txn) error) error {
 		return chain.updateFn(update)
 	}
 	return chain.Database.Update(update)
+}
+
+func cumulativeWorkKey(hash []byte) []byte {
+	return append([]byte("cw-"), hash...)
+}
+
+func encodeWork(work *big.Int) []byte {
+	value := work.Bytes()
+	encoded := make([]byte, 4+len(value))
+	binary.BigEndian.PutUint32(encoded[:4], uint32(len(value)))
+	copy(encoded[4:], value)
+	return encoded
+}
+
+func decodeWork(encoded []byte) (*big.Int, error) {
+	if len(encoded) < 4 {
+		return nil, errors.New("invalid cumulative work encoding")
+	}
+	length := int(binary.BigEndian.Uint32(encoded[:4]))
+	if length != len(encoded)-4 {
+		return nil, errors.New("invalid cumulative work length")
+	}
+	return new(big.Int).SetBytes(encoded[4:]), nil
+}
+
+// cumulativeWork reads a cached score when available and can derive scores for
+// older databases by walking the block ancestry.
+func cumulativeWork(txn *badger.Txn, hash []byte) (*big.Int, error) {
+	item, err := txn.Get(cumulativeWorkKey(hash))
+	if err == nil {
+		encoded, err := item.ValueCopy(nil)
+		if err != nil {
+			return nil, err
+		}
+		return decodeWork(encoded)
+	}
+	if !errors.Is(err, badger.ErrKeyNotFound) {
+		return nil, err
+	}
+
+	item, err = txn.Get(hash)
+	if err != nil {
+		return nil, err
+	}
+	data, err := item.ValueCopy(nil)
+	if err != nil {
+		return nil, err
+	}
+	block := core.DeserializeBlock(data)
+	if block == nil {
+		return nil, errors.New("failed to decode block while calculating cumulative work")
+	}
+	if len(block.PrevBlockHash) == 0 {
+		return new(big.Int), nil
+	}
+	parentWork, err := cumulativeWork(txn, block.PrevBlockHash)
+	if err != nil {
+		return nil, err
+	}
+	work, err := consensus.BlockWork(block.Difficulty)
+	if err != nil {
+		return nil, err
+	}
+	return new(big.Int).Add(parentWork, work), nil
+}
+
+func forkChoicePrefers(candidateHash []byte, candidateWork *big.Int, currentHash []byte, currentWork *big.Int) bool {
+	if comparison := candidateWork.Cmp(currentWork); comparison != 0 {
+		return comparison > 0
+	}
+	return bytes.Compare(candidateHash, currentHash) < 0
 }
 
 // GetBlockHashes returns a list of hashes of all the blocks in the chain
@@ -302,6 +378,17 @@ func (chain *Blockchain) forgeBlock(transactions []*core.Transaction, privKey ec
 		if err != nil {
 			return err
 		}
+		parentWork, err := cumulativeWork(txn, lastHash)
+		if err != nil {
+			return fmt.Errorf("failed to read parent cumulative work: %w", err)
+		}
+		blockWork, err := consensus.BlockWork(newBlock.Difficulty)
+		if err != nil {
+			return err
+		}
+		if err := txn.Set(cumulativeWorkKey(newBlock.Hash), encodeWork(new(big.Int).Add(parentWork, blockWork))); err != nil {
+			return fmt.Errorf("failed to store cumulative work: %w", err)
+		}
 		err = txn.Set(newBlock.Hash, serialized)
 		if err != nil {
 			return err
@@ -354,7 +441,9 @@ func (chain *Blockchain) AddBlockWithUTXO(block *core.Block, utxo *UTXOSet, txCa
 }
 
 func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...map[string]core.Transaction) (bool, error) {
-	if block == nil {
+	// Genesis is installed through InitBlockchain; all accepted blocks must have
+	// a parent so their header and cumulative work can be validated.
+	if block == nil || len(block.PrevBlockHash) == 0 {
 		return false, nil
 	}
 	// 0. Exist Check: Verify duplicates BEFORE expensive crypto validation
@@ -430,11 +519,25 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 		fmt.Println("AddBlock: core.Block rejected - invalid transaction signatures")
 		return false, nil
 	}
+	blockWork, err := consensus.BlockWork(block.Difficulty)
+	if err != nil {
+		return false, nil
+	}
+	var parentWork *big.Int
+	err = chain.Database.View(func(txn *badger.Txn) error {
+		var err error
+		parentWork, err = cumulativeWork(txn, block.PrevBlockHash)
+		return err
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to calculate parent cumulative work: %w", err)
+	}
+	candidateWork := new(big.Int).Add(parentWork, blockWork)
 
 	var stagedUTXOPrefix string
 	if utxo != nil {
 		var currentTipHash []byte
-		var currentTipHeight int
+		var currentTipWork *big.Int
 		err = chain.Database.View(func(txn *badger.Txn) error {
 			item, err := txn.Get([]byte("lh"))
 			if err != nil {
@@ -444,25 +547,13 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 			if err != nil {
 				return err
 			}
-			item, err = txn.Get(currentTipHash)
-			if err != nil {
-				return err
-			}
-			data, err := item.ValueCopy(nil)
-			if err != nil {
-				return err
-			}
-			currentTip := core.DeserializeBlock(data)
-			if currentTip == nil {
-				return errors.New("failed to decode current tip block")
-			}
-			currentTipHeight = currentTip.Height
+			currentTipWork, err = cumulativeWork(txn, currentTipHash)
 			return nil
 		})
 		if err != nil {
 			return false, fmt.Errorf("failed to read canonical tip before UTXO update: %w", err)
 		}
-		if block.Height > currentTipHeight && !bytes.Equal(block.PrevBlockHash, currentTipHash) {
+		if forkChoicePrefers(block.Hash, candidateWork, currentTipHash, currentTipWork) && !bytes.Equal(block.PrevBlockHash, currentTipHash) {
 			stagedUTXOPrefix, err = utxo.stageReindex(block.Hash, block)
 			if err != nil {
 				return false, fmt.Errorf("failed to stage UTXO set after reorganization: %w", err)
@@ -482,6 +573,9 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 		blockData, err := block.Serialize()
 		if err != nil {
 			return err
+		}
+		if err := txn.Set(cumulativeWorkKey(block.Hash), encodeWork(candidateWork)); err != nil {
+			return fmt.Errorf("failed to store cumulative work: %w", err)
 		}
 		err = txn.Set(block.Hash, blockData)
 		if err != nil {
@@ -519,7 +613,11 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 			return errors.New("failed to decode current tip block")
 		}
 
-		if block.Height > lastBlock.Height {
+		lastWork, err := cumulativeWork(txn, lastHash)
+		if err != nil {
+			return fmt.Errorf("failed to read canonical cumulative work: %w", err)
+		}
+		if forkChoicePrefers(block.Hash, candidateWork, lastHash, lastWork) {
 			err = txn.Set([]byte("lh"), block.Hash)
 			if err != nil {
 				return err

@@ -135,6 +135,21 @@ func TestCalculateHash_FieldSensitivity_Height(t *testing.T) {
 	}
 }
 
+func TestCalculateHash_FieldSensitivity_Difficulty(t *testing.T) {
+	t.Parallel()
+
+	b := makeTestBlock([]byte("validator"))
+	b.Difficulty = 1
+	h1 := b.CalculateHash()
+
+	b.Difficulty = 2
+	h2 := b.CalculateHash()
+
+	if bytes.Equal(h1, h2) {
+		t.Fatal("Expected different hashes for different Difficulty values, but they are equal")
+	}
+}
+
 // TestCalculateHash_FieldSensitivity_PrevBlockHash verifies that changing
 // PrevBlockHash produces a different hash.
 func TestCalculateHash_FieldSensitivity_PrevBlockHash(t *testing.T) {
