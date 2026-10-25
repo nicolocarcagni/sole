@@ -22,15 +22,14 @@
 
 ---
 
-[Key Highlights](#core-value-proposition--key-highlights) •
+[Key Highlights](#key-highlights) •
 [Specifications](#key-specifications) •
 [Architecture](#repository-architecture) •
 [Quickstart](#quickstart--developer-experience) •
 [CLI Cheat-Sheet](#essential-cli-cheat-sheet) •
-[Ecosystem & Use Cases](#academic-use-cases--ecosystem) •
 [API & WebSockets](#rest-api--websocket-streams) •
 [Documentation](#documentation) •
-[Disclaimer](#academic-disclaimer)
+[Disclaimer](#disclaimer)
 
 ---
 
@@ -40,12 +39,7 @@
 
 **SOLE (Secure Open Ledger for Education)** is a modern, modular, UTXO-based distributed ledger developed as a pedagogical and experimental blockchain for the **University of Salento (Università del Salento)**.
 
-Unlike legacy compute-intensive blockchains, SOLE implements an energy-efficient **Proof-of-Authority (PoA)** consensus mechanism tailored for institutional and campus environments. It bridges rigorous academic research with industrial-grade software engineering, providing zero-carbon finality, deterministic 10-second block intervals, and instant balance verification. 
-
-Originally created to power decentralized student micro-economies and notarize academic credentials on-chain, SOLE v4.0.0 introduces decoupled light-client capabilities, BadgerDB v3 LSM-tree persistent indexing, robust libp2p network quotas, real-time WebSocket telemetry, and support for autonomous multi-agent simulation environments.
-
-> *"Lu sule, lu mare, lu ientu. Unisalento 2026."*  
-> — **Genesis Block Inscription (Block #0)**
+Unlike legacy compute-intensive blockchains, SOLE implements an energy-efficient **Proof-of-Authority (PoA)** consensus mechanism tailored for institutional and campus environments. It bridges rigorous academic research with industrial-grade software engineering, providing zero-carbon finality, deterministic 10-second block intervals, and instant balance verification.
 
 ---
 
@@ -282,43 +276,6 @@ Transactions are constructed and signed locally on your machine—your private k
 ./sole-cli chain reset
 ```
 
----
-
-## 🎓 Academic Use Cases & Ecosystem <a id="academic-use-cases--ecosystem"></a><a id="academic-use-cases"></a>
-
-SOLE was conceived at the **University of Salento** to explore decentralized systems in higher education. Its architecture natively accommodates student economies, identity certification, and research integrations.
-
-```
-                          ┌───────────────────────────┐
-                          │   UniSalento Ecosystem    │
-                          └─────────────┬─────────────┘
-                                        │
-         ┌──────────────────────────────┼──────────────────────────────┐
-         ▼                              ▼                              ▼
- 🎓 Academic Notarization      🤖 LLM Campus Simulation       💳 Student Micro-Economy
- • ECTS / CFU Certifications   • Autonomous AI Agents         • University Cafeteria Payments
- • Bachelor/Master Theses      • Multi-agent Market Games     • Library Printing Credits
- • Digitally Signed Diplomas   • Prompt-driven Transacting    • Peer-to-Peer Study Rewards
-         │                              │                              │
-         └──────────────────────────────┼──────────────────────────────┘
-                                        ▼
-                          ┌───────────────────────────┐
-                          │  SOLE Blockchain Core     │
-                          │  (PoA • UTXO • BadgerDB)  │
-                          └───────────────────────────┘
-```
-
-### 1. On-Chain Academic Notarization (`OP_RETURN`)
-By embedding up to 80 bytes of arbitrary cryptographic hash or textual identifier into zero-value unspendable outputs, departments can notarize academic achievements directly onto the ledger:
-- **CFU / ECTS Attestations:** `CFU-ING-INF/05:9CFU:30L:2026-03`
-- **Thesis & Diploma Hashes:** `SHA256:d5a1... (Bachelor Thesis Registration)`
-- **Lab Accreditation:** Verifiable timestamped proofs of participation in academic research experiments.
-
-### 2. Autonomous AI Agent Simulation (`campus_sim.py`)
-SOLE serves as a testbed for multi-agent autonomous economies. Using the Python-based simulation engine (`campus_sim.py`), hundreds of autonomous LLM agents (representing students, professors, departmental services, and campus amenities) interact, negotiate, and execute micropayments for tutoring, cafeteria goods, and computing resources via the SOLE REST API.
-
-### 3. Telegram Custodial Wallet Integration
-For everyday campus life, students can interact with SOLE through a dedicated **Telegram Custodial Wallet Bot**. Users can check balances, tip fellow classmates, split study group expenses, or receive university bursary rewards directly within mobile chat interfaces.
 
 ---
 
@@ -386,7 +343,9 @@ go tool cover -func=coverage.out
 
 ---
 
-## 🛡️ Academic Disclaimer <a id="disclaimer"></a>
+<a id="disclaimer"></a>
+<a id="academic-disclaimer"></a>
+## 🛡️ Academic Disclaimer
 
 > [!CAUTION]
 > **Educational & Research Software Only**  
