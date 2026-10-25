@@ -220,6 +220,56 @@ func TestValidateBlockHeader_ValidBlock(t *testing.T) {
 	}
 }
 
+func TestTimestampMedianRule(t *testing.T) {
+	parent := &core.Block{Timestamp: 120, Height: 10}
+	ancestors := []*core.Block{
+		{Timestamp: 100, Height: 9},
+		{Timestamp: 90, Height: 8},
+		{Timestamp: 80, Height: 7},
+		{Timestamp: 70, Height: 6},
+	}
+	block := mineTimestampTestBlock(110, parent)
+
+	if err := consensus.ValidateBlockHeader(block, parent, ancestors...); err != nil {
+		t.Fatalf("timestamp above the median should pass even when the parent is an outlier: %v", err)
+	}
+}
+
+func TestTimestampRejectsTooOldBlock(t *testing.T) {
+	parent := &core.Block{Timestamp: 120, Height: 10}
+	ancestors := []*core.Block{
+		{Timestamp: 100, Height: 9},
+		{Timestamp: 90, Height: 8},
+		{Timestamp: 80, Height: 7},
+		{Timestamp: 70, Height: 6},
+	}
+	block := mineTimestampTestBlock(90, parent)
+
+	if err := consensus.ValidateBlockHeader(block, parent, ancestors...); err == nil {
+		t.Fatal("timestamp at the median must be rejected")
+	}
+}
+
+func TestTimestampValidationIsIndependentOfLocalClock(t *testing.T) {
+	parent := &core.Block{Timestamp: 4_000_000_000, Height: 1}
+	block := mineTimestampTestBlock(parent.Timestamp+10, parent)
+
+	if err := consensus.ValidateBlockHeader(block, parent); err != nil {
+		t.Fatalf("chain-valid timestamp should not depend on the local clock: %v", err)
+	}
+}
+
+func mineTimestampTestBlock(timestamp int64, parent *core.Block) *core.Block {
+	block := &core.Block{
+		Timestamp:     timestamp,
+		Height:        parent.Height + 1,
+		PrevBlockHash: []byte("parent-hash"),
+		Difficulty:    consensus.DefaultDifficulty,
+	}
+	consensus.MineBlock(block)
+	return block
+}
+
 // TestValidateBlockHeader_TamperedTransaction verifies that altering a
 // transaction ID after mining causes consensus.ValidateBlockHeader to reject the block.
 func TestValidateBlockHeader_TamperedTransaction(t *testing.T) {
