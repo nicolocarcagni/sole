@@ -7,7 +7,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/big"
+	"sort"
 	"time"
 
 	"github.com/nicolocarcagni/sole/pkg/core"
@@ -122,8 +124,11 @@ func VerifyBlockSignature(block *core.Block) bool {
 // --- PoA Hardening: Temporal Validation & Anti-Spam ---
 
 const (
-	// DriftTolerance is the allowed time difference for block timestamp
+	// DriftTolerance is the maximum allowed timestamp advance from a block's parent.
 	DriftTolerance = 1 * time.Minute
+	// MedianTimeWindow is the maximum number of recent block timestamps used
+	// to establish the lower bound for a candidate block.
+	MedianTimeWindow = 11
 	// DefaultDifficulty is the number of leading zero bytes required for new blocks.
 	DefaultDifficulty uint8 = core.DefaultDifficulty
 	// TargetZeros is retained for callers that use the original default PoW target.
@@ -174,7 +179,10 @@ func BlockWork(difficulty uint8) (*big.Int, error) {
 	return new(big.Int).Lsh(big.NewInt(1), uint(difficulty)*8), nil
 }
 
-func ValidateBlockHeader(block *core.Block, prevBlock *core.Block) error {
+func ValidateBlockHeader(block *core.Block, prevBlock *core.Block, ancestors ...*core.Block) error {
+	if block == nil || prevBlock == nil {
+		return fmt.Errorf("block and parent are required for header validation")
+	}
 	if block.Difficulty == 0 || block.Difficulty > MaxDifficulty {
 		return fmt.Errorf("invalid block difficulty: %d", block.Difficulty)
 	}
@@ -187,15 +195,37 @@ func ValidateBlockHeader(block *core.Block, prevBlock *core.Block) error {
 		return fmt.Errorf("block hash mismatch: stored hash %x does not match calculated hash %x", block.Hash, expectedHash)
 	}
 
-	// 1. Monotonic Timestamp
-	if block.Timestamp <= prevBlock.Timestamp {
-		return fmt.Errorf("timestamp is not monotonic (Current: %d, Prev: %d)", block.Timestamp, prevBlock.Timestamp)
+	// 1. Median Time Past: candidate timestamps must advance beyond the median
+	// of the parent and up to ten preceding ancestors.
+	timestamps := make([]int64, 0, MedianTimeWindow)
+	timestamps = append(timestamps, prevBlock.Timestamp)
+	expectedHeight := prevBlock.Height - 1
+	for _, ancestor := range ancestors {
+		if len(timestamps) == MedianTimeWindow {
+			break
+		}
+		if ancestor == nil || ancestor.Height != expectedHeight {
+			return fmt.Errorf("invalid timestamp history: expected ancestor at height %d", expectedHeight)
+		}
+		timestamps = append(timestamps, ancestor.Timestamp)
+		expectedHeight--
+	}
+	sort.Slice(timestamps, func(i, j int) bool { return timestamps[i] < timestamps[j] })
+	medianTimestamp := timestamps[len(timestamps)/2]
+	if block.Timestamp <= medianTimestamp {
+		return fmt.Errorf("timestamp is not greater than median time past (Current: %d, Median: %d)", block.Timestamp, medianTimestamp)
 	}
 
-	// 2. Drift Tolerance (Future Check)
-	now := time.Now().Unix()
-	if block.Timestamp > now+int64(DriftTolerance.Seconds()) {
-		return fmt.Errorf("timestamp too far in future (core.Block: %d, Now: %d, Limit: %d)", block.Timestamp, now, int64(DriftTolerance.Seconds()))
+	// 2. Bound timestamp advances using only the chain, never the local clock.
+	maxAdvance := int64(DriftTolerance / time.Second)
+	maxTimestamp := prevBlock.Timestamp
+	if maxTimestamp > math.MaxInt64-maxAdvance {
+		maxTimestamp = math.MaxInt64
+	} else {
+		maxTimestamp += maxAdvance
+	}
+	if block.Timestamp > maxTimestamp {
+		return fmt.Errorf("timestamp advances too far beyond parent (Current: %d, Parent: %d, Maximum advance: %d)", block.Timestamp, prevBlock.Timestamp, maxAdvance)
 	}
 
 	// 3. Anti-Spam (Proof of Work) — checked against the verified hash.

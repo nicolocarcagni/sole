@@ -464,6 +464,7 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 
 	if len(block.PrevBlockHash) > 0 {
 		var prevBlock core.Block
+		var timestampAncestors []*core.Block
 		err = chain.Database.View(func(txn *badger.Txn) error {
 			item, err := txn.Get(block.PrevBlockHash)
 			if err != nil {
@@ -478,6 +479,27 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 				return errors.New("failed to decode parent block")
 			}
 			prevBlock = *decoded
+
+			current := decoded
+			for current.Height > 0 && len(timestampAncestors) < consensus.MedianTimeWindow-1 {
+				if len(current.PrevBlockHash) == 0 {
+					return fmt.Errorf("timestamp history is missing the parent hash at height %d", current.Height)
+				}
+				ancestorItem, err := txn.Get(current.PrevBlockHash)
+				if err != nil {
+					return fmt.Errorf("failed to retrieve timestamp ancestor at height %d: %v", current.Height-1, err)
+				}
+				ancestorData, err := ancestorItem.ValueCopy(nil)
+				if err != nil {
+					return fmt.Errorf("failed to read timestamp ancestor at height %d: %w", current.Height-1, err)
+				}
+				ancestor := core.DeserializeBlock(ancestorData)
+				if ancestor == nil || ancestor.Height != current.Height-1 {
+					return fmt.Errorf("invalid timestamp ancestor at height %d", current.Height-1)
+				}
+				timestampAncestors = append(timestampAncestors, ancestor)
+				current = ancestor
+			}
 			return nil
 		})
 		if err != nil {
@@ -493,7 +515,7 @@ func (chain *Blockchain) addBlock(block *core.Block, utxo *UTXOSet, txCache ...m
 			return false, nil
 		}
 
-		if err := consensus.ValidateBlockHeader(block, &prevBlock); err != nil {
+		if err := consensus.ValidateBlockHeader(block, &prevBlock, timestampAncestors...); err != nil {
 			fmt.Printf("⛔ AddBlock: Header Validation Failed: %s\n", err)
 			return false, nil
 		}
