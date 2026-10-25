@@ -15,10 +15,13 @@ import (
 )
 
 const (
-	MaxTxInputs        = 10000
-	MaxTxOutputs       = 10000
-	MaxFieldLen        = 1 << 20             // 1MB per field
-	MaxMoney     int64 = 8910000 * 100000000 // Maximum supply in atomic units
+	MaxTxSize             = 100 * 1024          // 100 KB max transaction payload size
+	MaxFieldLen           = MaxTxSize           // Align field length limit to max transaction size
+	MinTxInputSize        = 32                  // Minimum serialized input size (4 int64 length/value prefixes)
+	MinTxOutputSize       = 16                  // Minimum serialized output size (2 int64 length/value prefixes)
+	MaxTxInputs           = 2000                // Maximum inputs per transaction
+	MaxTxOutputs          = 2000                // Maximum outputs per transaction
+	MaxMoney        int64 = 8910000 * 100000000 // Maximum supply in atomic units
 )
 
 type TxOutput struct {
@@ -117,6 +120,11 @@ func (tx Transaction) Serialize() []byte {
 
 func DeserializeTransaction(data []byte) (Transaction, error) {
 	var tx Transaction
+
+	if len(data) > MaxTxSize {
+		return tx, fmt.Errorf("transaction size %d exceeds maximum allowed %d", len(data), MaxTxSize)
+	}
+
 	reader := bytes.NewReader(data)
 
 	readLen := func(field string) (int64, error) {
@@ -140,6 +148,14 @@ func DeserializeTransaction(data []byte) (Transaction, error) {
 	}
 	if inputsCount < 0 || inputsCount > MaxTxInputs {
 		return tx, fmt.Errorf("invalid input count %d", inputsCount)
+	}
+
+	if inputsCount > 0 {
+		minBytesRequired := inputsCount * MinTxInputSize
+		if int64(reader.Len()) < minBytesRequired {
+			return tx, fmt.Errorf("insufficient data for %d inputs: need at least %d bytes, have %d", inputsCount, minBytesRequired, reader.Len())
+		}
+		tx.Vin = make([]TxInput, 0, inputsCount)
 	}
 
 	for i := 0; i < int(inputsCount); i++ {
@@ -195,6 +211,14 @@ func DeserializeTransaction(data []byte) (Transaction, error) {
 	}
 	if outputsCount < 0 || outputsCount > MaxTxOutputs {
 		return tx, fmt.Errorf("invalid output count %d", outputsCount)
+	}
+
+	if outputsCount > 0 {
+		minBytesRequired := outputsCount * MinTxOutputSize
+		if int64(reader.Len()) < minBytesRequired {
+			return tx, fmt.Errorf("insufficient data for %d outputs: need at least %d bytes, have %d", outputsCount, minBytesRequired, reader.Len())
+		}
+		tx.Vout = make([]TxOutput, 0, outputsCount)
 	}
 
 	for i := 0; i < int(outputsCount); i++ {

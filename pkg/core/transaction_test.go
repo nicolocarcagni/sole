@@ -6,8 +6,10 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -354,5 +356,58 @@ func TestMerkleRootPreservation(t *testing.T) {
 	// 4. Assert both roots are identical
 	if !bytes.Equal(root1, root2) {
 		t.Fatalf("Merkle roots do not match: original %x, deserialized %x", root1, root2)
+	}
+}
+
+func TestDeserializeTransactionRejectsOversizedPayload(t *testing.T) {
+	// 1. Raw payload exceeding MaxTxSize
+	rawOversized := make([]byte, MaxTxSize+1)
+	if _, err := DeserializeTransaction(rawOversized); err == nil {
+		t.Fatal("expected error for raw payload exceeding MaxTxSize, got nil")
+	} else if !strings.Contains(err.Error(), "exceeds maximum allowed") {
+		t.Fatalf("expected error mentioning maximum allowed size, got: %v", err)
+	}
+
+	// 2. Structurally valid serialized transaction exceeding MaxTxSize
+	largeTx := Transaction{
+		Vin: []TxInput{{
+			Txid: make([]byte, MaxTxSize+10),
+			Vout: 0,
+		}},
+		Timestamp: 1,
+	}
+	serialized := largeTx.Serialize()
+	if len(serialized) <= MaxTxSize {
+		t.Fatalf("test setup failure: serialized transaction length %d not greater than MaxTxSize %d", len(serialized), MaxTxSize)
+	}
+	if _, err := DeserializeTransaction(serialized); err == nil {
+		t.Fatalf("expected oversized serialized transaction (%d bytes) to be rejected, got nil", len(serialized))
+	} else if !strings.Contains(err.Error(), "exceeds maximum allowed") {
+		t.Fatalf("expected error mentioning maximum allowed size, got: %v", err)
+	}
+}
+
+func TestDeserializeTransactionChecksSizeBeforeAllocation(t *testing.T) {
+	// 1. Inputs count claiming 1,000 inputs but stream only provides 20 bytes
+	var inBuf bytes.Buffer
+	binary.Write(&inBuf, binary.BigEndian, int64(1000))
+	inBuf.Write(make([]byte, 20))
+
+	if _, err := DeserializeTransaction(inBuf.Bytes()); err == nil {
+		t.Fatal("expected error when declared inputs count exceeds available stream bytes, got nil")
+	} else if !strings.Contains(err.Error(), "insufficient data for") {
+		t.Fatalf("expected error mentioning insufficient data before allocation, got: %v", err)
+	}
+
+	// 2. Outputs count claiming 1,000 outputs but stream only provides 10 bytes
+	var outBuf bytes.Buffer
+	binary.Write(&outBuf, binary.BigEndian, int64(0))    // 0 inputs
+	binary.Write(&outBuf, binary.BigEndian, int64(1000)) // 1,000 outputs
+	outBuf.Write(make([]byte, 10))
+
+	if _, err := DeserializeTransaction(outBuf.Bytes()); err == nil {
+		t.Fatal("expected error when declared outputs count exceeds available stream bytes, got nil")
+	} else if !strings.Contains(err.Error(), "insufficient data for") {
+		t.Fatalf("expected error mentioning insufficient data before allocation, got: %v", err)
 	}
 }
