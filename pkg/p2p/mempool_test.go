@@ -652,3 +652,223 @@ func TestPeerCannotExceedMempoolQuota(t *testing.T) {
 		t.Fatalf("FAIL: txB1 from Peer B should be admitted, mempool has %d items", lenAfterB1)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// [P1-05] Mempool Lock Contention & Concurrency Tests
+// ---------------------------------------------------------------------------
+
+func createCompetingSpendTxs(t *testing.T, chain *storage.Blockchain, parentSuffix string, val int64, fee int64) (*core.Transaction, *core.Transaction) {
+	t.Helper()
+	privKey, pubKey := generateTestKeyPair()
+	pubKeyHash := core.HashPubKey(pubKey)
+
+	parentTxID := []byte("parent-txid-" + parentSuffix)
+	parentTx := &core.Transaction{
+		ID:  parentTxID,
+		Vin: []core.TxInput{{Txid: []byte{}, Vout: -1, PubKey: []byte("coinbase")}},
+		Vout: []core.TxOutput{
+			{Value: val + fee, PubKeyHash: pubKeyHash},
+		},
+		Timestamp: time.Now().Unix(),
+	}
+	parentKey := fmt.Sprintf("%s%s-%d", storage.UtxoPrefix, hex.EncodeToString(parentTxID), 0)
+	chain.Database.Update(func(txn *badger.Txn) error {
+		serialized, err := storage.SerializeUTXO(parentTx.Vout[0])
+		if err != nil {
+			return err
+		}
+		return txn.Set([]byte(parentKey), serialized)
+	})
+	block := makeMinedBlock(t, []*core.Transaction{parentTx}, chain.LastHash, 1)
+	chain.LastHash = block.Hash
+	writeBlockToDB(t, chain.Database, block)
+
+	prevTXs := map[string]core.Transaction{hex.EncodeToString(parentTxID): *parentTx}
+
+	spend1 := core.Transaction{
+		Vin:       []core.TxInput{{Txid: parentTxID, Vout: 0, PubKey: pubKey}},
+		Vout:      []core.TxOutput{{Value: val, PubKeyHash: pubKeyHash}},
+		Timestamp: time.Now().Unix(),
+	}
+	spend1.Sign(privKey, prevTXs)
+
+	spend2 := core.Transaction{
+		Vin:       []core.TxInput{{Txid: parentTxID, Vout: 0, PubKey: pubKey}},
+		Vout:      []core.TxOutput{{Value: val - 1, PubKeyHash: pubKeyHash}},
+		Timestamp: time.Now().Unix() + 1,
+	}
+	spend2.Sign(privKey, prevTXs)
+
+	return &spend1, &spend2
+}
+
+// TestConcurrentHandleTxAndMiningProgress verifies that AttemptMine does not hold
+// MempoolMux during block forging, disk operations, or event callbacks, allowing
+// concurrent transactions to be processed via HandleTx without contention or deadlock.
+func TestConcurrentHandleTxAndMiningProgress(t *testing.T) {
+	chain := newTestBlockchain(t)
+	utxo := &storage.UTXOSet{Blockchain: chain}
+	srv := makeMempoolServer(t, chain, utxo)
+
+	valPriv, valPub := generateTestKeyPair()
+	srv.ValidatorPrivKey = &valPriv
+	srv.MinerAddr = core.AddressFromPubKeyHash(core.HashPubKey(valPub))
+
+	// Initial transaction in mempool to be included in the forged block
+	tx1 := createTestSpendTx(t, chain, "mine-prog-1", 1000, 50)
+	srv.HandleTx(encodeTxMsg(t, tx1), peer.ID("peer-init"))
+
+	tx2 := createTestSpendTx(t, chain, "mine-prog-2", 2000, 60)
+	tx2Bytes := encodeTxMsg(t, tx2)
+
+	tx2Admitted := make(chan bool, 1)
+	lockHeldDuringForge := false
+
+	srv.OnNewBlock = func(b *core.Block) {
+		// Verify if MempoolMux is locked during OnNewBlock
+		if !srv.MempoolMux.TryLock() {
+			lockHeldDuringForge = true
+		} else {
+			srv.MempoolMux.Unlock()
+		}
+
+		// Concurrently invoke HandleTx from another goroutine during block event
+		go func() {
+			srv.HandleTx(tx2Bytes, peer.ID("peer-concurrent"))
+			srv.MempoolMux.Lock()
+			_, found := srv.Mempool[hex.EncodeToString(tx2.ID)]
+			srv.MempoolMux.Unlock()
+			tx2Admitted <- found
+		}()
+	}
+
+	srv.AttemptMine()
+
+	if lockHeldDuringForge {
+		t.Fatalf("FAIL: MempoolMux was held during AttemptMine block forging/OnNewBlock callback")
+	}
+
+	select {
+	case admitted := <-tx2Admitted:
+		if !admitted {
+			t.Fatalf("FAIL: concurrent transaction tx2 was not admitted to mempool")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("FAIL: timeout waiting for concurrent HandleTx to complete (deadlock or blocked on MempoolMux)")
+	}
+}
+
+// TestMempoolLockNotHeldDuringRelay verifies that MempoolMux is released before
+// executing transaction callbacks (OnNewTx) or broadcasting peer inventory.
+func TestMempoolLockNotHeldDuringRelay(t *testing.T) {
+	chain := newTestBlockchain(t)
+	utxo := &storage.UTXOSet{Blockchain: chain}
+	srv := makeMempoolServer(t, chain, utxo)
+
+	tx := createTestSpendTx(t, chain, "relay-1", 1000, 50)
+	txBytes := encodeTxMsg(t, tx)
+
+	lockHeldDuringCallback := false
+	callbackInvoked := false
+
+	srv.OnNewTx = func(admittedTx *core.Transaction) {
+		callbackInvoked = true
+		if !srv.MempoolMux.TryLock() {
+			lockHeldDuringCallback = true
+		} else {
+			srv.MempoolMux.Unlock()
+		}
+	}
+
+	srv.HandleTx(txBytes, peer.ID("peer-relay-test"))
+
+	if !callbackInvoked {
+		t.Fatalf("FAIL: OnNewTx callback was not invoked")
+	}
+	if lockHeldDuringCallback {
+		t.Fatalf("FAIL: MempoolMux was held during OnNewTx callback/relay")
+	}
+}
+
+// TestConcurrentMempoolUpdates verifies that concurrent calls to HandleTx
+// from multiple simulated peers properly synchronize, reject double-spends,
+// maintain exact byte/peer tallies, and produce zero data races.
+func TestConcurrentMempoolUpdates(t *testing.T) {
+	chain := newTestBlockchain(t)
+	utxo := &storage.UTXOSet{Blockchain: chain}
+	srv := makeMempoolServer(t, chain, utxo)
+
+	const numPeers = 4
+	const txsPerPeer = 5
+
+	// 1. Pre-generate independent transactions sequentially before launching concurrent submissions
+	peerMsgs := make([][][]byte, numPeers)
+	for p := 0; p < numPeers; p++ {
+		peerMsgs[p] = make([][]byte, txsPerPeer)
+		for i := 0; i < txsPerPeer; i++ {
+			suffix := fmt.Sprintf("p%d-tx%d", p, i)
+			tx := createTestSpendTx(t, chain, suffix, int64(100+i), 10)
+			peerMsgs[p][i] = encodeTxMsg(t, tx)
+		}
+	}
+
+	// Concurrently submit transactions from multiple peers
+	var wg sync.WaitGroup
+	for p := 0; p < numPeers; p++ {
+		peerID := peer.ID(fmt.Sprintf("peer-concurrent-%d", p))
+		wg.Add(1)
+		go func(pID peer.ID, msgs [][]byte) {
+			defer wg.Done()
+			for _, msg := range msgs {
+				srv.HandleTx(msg, pID)
+			}
+		}(peerID, peerMsgs[p])
+	}
+	wg.Wait()
+
+	srv.MempoolMux.Lock()
+	totalTxs := len(srv.Mempool)
+	totalBytes := srv.MempoolBytes
+	calculatedBytes := 0
+	for _, item := range srv.Mempool {
+		calculatedBytes += item.Size()
+	}
+	srv.MempoolMux.Unlock()
+
+	expectedTxs := numPeers * txsPerPeer
+	if totalTxs != expectedTxs {
+		t.Fatalf("FAIL: expected %d transactions in mempool, got %d", expectedTxs, totalTxs)
+	}
+	if totalBytes != calculatedBytes {
+		t.Fatalf("FAIL: MempoolBytes (%d) does not match actual item size (%d)", totalBytes, calculatedBytes)
+	}
+
+	// 2. Concurrent double-spend race: submit two competing transactions claiming the same UTXO
+	spendA, spendB := createCompetingSpendTxs(t, chain, "competing-race", 500, 10)
+	msgA := encodeTxMsg(t, spendA)
+	msgB := encodeTxMsg(t, spendB)
+
+	var spendWg sync.WaitGroup
+	spendWg.Add(2)
+	go func() {
+		defer spendWg.Done()
+		srv.HandleTx(msgA, peer.ID("peer-race-a"))
+	}()
+	go func() {
+		defer spendWg.Done()
+		srv.HandleTx(msgB, peer.ID("peer-race-b"))
+	}()
+	spendWg.Wait()
+
+	srv.MempoolMux.Lock()
+	_, hasA := srv.Mempool[hex.EncodeToString(spendA.ID)]
+	_, hasB := srv.Mempool[hex.EncodeToString(spendB.ID)]
+	srv.MempoolMux.Unlock()
+
+	if hasA && hasB {
+		t.Fatalf("FAIL: both conflicting transactions were admitted to mempool (double spend undetected)")
+	}
+	if !hasA && !hasB {
+		t.Fatalf("FAIL: neither conflicting transaction was admitted to mempool")
+	}
+}

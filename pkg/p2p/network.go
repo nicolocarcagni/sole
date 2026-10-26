@@ -948,19 +948,27 @@ func (s *Server) addToMempoolLocked(item core.MempoolItem) {
 		s.removeFromMempoolLocked(txID)
 	}
 	sz := item.Size()
+	baseBytes := s.currentMempoolBytesLocked()
+
+	var peerBaseBytes, peerBaseCount int
+	if item.PeerID != "" {
+		peerBaseBytes = s.currentPeerBytesLocked(item.PeerID)
+		peerBaseCount = s.currentPeerTxCountLocked(item.PeerID)
+	}
+
 	s.Mempool[txID] = item
-	s.MempoolBytes = s.currentMempoolBytesLocked() + sz
+	s.MempoolBytes = baseBytes + sz
 
 	if item.PeerID != "" {
 		if s.MempoolPeerBytes == nil {
 			s.MempoolPeerBytes = make(map[string]int)
 		}
-		s.MempoolPeerBytes[item.PeerID] = s.currentPeerBytesLocked(item.PeerID) + sz
+		s.MempoolPeerBytes[item.PeerID] = peerBaseBytes + sz
 
 		if s.MempoolPeerCount == nil {
 			s.MempoolPeerCount = make(map[string]int)
 		}
-		s.MempoolPeerCount[item.PeerID] = s.currentPeerTxCountLocked(item.PeerID) + 1
+		s.MempoolPeerCount[item.PeerID] = peerBaseCount + 1
 	}
 }
 
@@ -1044,55 +1052,65 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		return
 	}
 
-	s.MempoolMux.Lock()
-	defer s.MempoolMux.Unlock()
-
 	txID := hex.EncodeToString(tx.ID)
+	txSize := len(txData)
+	peerKey := peerID.String()
 
-	// ── 2. Duplicate & In-Chain Checks ──────────────────────────────────────
+	// ── 2. Quick Mempool Capacity & Duplicate Check (Under Lock) ────────────
+	s.MempoolMux.Lock()
 	if s.Mempool[txID].Tx.ID != nil {
+		s.MempoolMux.Unlock()
 		return // Already in mempool
 	}
+	if len(s.Mempool) >= MaxMempoolSize {
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool full (%d/%d)\n", tx.ID, len(s.Mempool), MaxMempoolSize)
+		return
+	}
+	if s.currentMempoolBytesLocked()+txSize > s.maxMempoolBytes() {
+		mBytes := s.currentMempoolBytesLocked()
+		maxBytes := s.maxMempoolBytes()
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool byte budget exceeded (%d + %d > %d)\n",
+			tx.ID, mBytes, txSize, maxBytes)
+		return
+	}
+	if s.currentPeerBytesLocked(peerKey)+txSize > s.maxPeerMempoolBytes() {
+		pBytes := s.currentPeerBytesLocked(peerKey)
+		maxPeerBytes := s.maxPeerMempoolBytes()
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool byte quota (%d + %d > %d)\n",
+			tx.ID, ShortID(peerKey), pBytes, txSize, maxPeerBytes)
+		return
+	}
+	if s.currentPeerTxCountLocked(peerKey) >= s.maxPeerMempoolTx() {
+		pCount := s.currentPeerTxCountLocked(peerKey)
+		maxPeerTx := s.maxPeerMempoolTx()
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool count quota (%d/%d)\n",
+			tx.ID, ShortID(peerKey), pCount, maxPeerTx)
+		return
+	}
+
+	snapshot := make(map[string]core.MempoolItem, len(s.Mempool))
+	for k, v := range s.Mempool {
+		snapshot[k] = v
+	}
+	s.MempoolMux.Unlock()
+
+	// ── 3. Blockchain & Cryptographic Validations (Outside Lock) ────────────
 	if _, err := s.Blockchain.FindTransaction(tx.ID); err == nil {
 		return // Already confirmed in blockchain — not relayed again
 	}
 
-	// ── 3. Mempool Capacity & DoS Protection ────────────────────────────────
-	if len(s.Mempool) >= MaxMempoolSize {
-		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool full (%d/%d)\n", tx.ID, len(s.Mempool), MaxMempoolSize)
-		return
-	}
-
-	txSize := len(txData)
-	if s.currentMempoolBytesLocked()+txSize > s.maxMempoolBytes() {
-		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool byte budget exceeded (%d + %d > %d)\n",
-			tx.ID, s.currentMempoolBytesLocked(), txSize, s.maxMempoolBytes())
-		return
-	}
-
-	peerKey := peerID.String()
-	if s.currentPeerBytesLocked(peerKey)+txSize > s.maxPeerMempoolBytes() {
-		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool byte quota (%d + %d > %d)\n",
-			tx.ID, ShortID(peerKey), s.currentPeerBytesLocked(peerKey), txSize, s.maxPeerMempoolBytes())
-		return
-	}
-
-	if s.currentPeerTxCountLocked(peerKey) >= s.maxPeerMempoolTx() {
-		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool count quota (%d/%d)\n",
-			tx.ID, ShortID(peerKey), s.currentPeerTxCountLocked(peerKey), s.maxPeerMempoolTx())
-		return
-	}
-
-	// ── 4. Cryptographic Signature Verification ─────────────────────────────
-	// This MUST happen before CalculateFee to avoid leaking timing information
-	// or processing further DB lookups on an unverified transaction.
-	if !s.Blockchain.VerifyTransactionWithMempool(&tx, s.Mempool) {
+	// Signature verification MUST happen before CalculateFee to avoid leaking timing
+	// information or processing DB lookups on unverified transactions.
+	if !s.Blockchain.VerifyTransactionWithMempool(&tx, snapshot) {
 		fmt.Printf("⛔ [HandleTx] Rejected TX %x: invalid or unverified signature from peer %s\n", tx.ID, peerID)
 		return
 	}
 
-	// ── 5. Input Validity & Fee Calculation ─────────────────────────────────
-	fee, err := s.UTXOSet.CalculateFee(&tx, s.Mempool)
+	fee, err := s.UTXOSet.CalculateFee(&tx, snapshot)
 	if err != nil {
 		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: cannot calculate fee: %s\n", tx.ID, err)
 		return
@@ -1102,7 +1120,43 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		return
 	}
 
-	// ── 6. Mempool Double-Spend Check ────────────────────────────────────────
+	// ── 4. Re-check Conditions & Commit to Mempool (Under Lock) ───────────────
+	s.MempoolMux.Lock()
+	if s.Mempool[txID].Tx.ID != nil {
+		s.MempoolMux.Unlock()
+		return
+	}
+	if len(s.Mempool) >= MaxMempoolSize {
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool full (%d/%d)\n", tx.ID, len(s.Mempool), MaxMempoolSize)
+		return
+	}
+	if s.currentMempoolBytesLocked()+txSize > s.maxMempoolBytes() {
+		mBytes := s.currentMempoolBytesLocked()
+		maxBytes := s.maxMempoolBytes()
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: mempool byte budget exceeded (%d + %d > %d)\n",
+			tx.ID, mBytes, txSize, maxBytes)
+		return
+	}
+	if s.currentPeerBytesLocked(peerKey)+txSize > s.maxPeerMempoolBytes() {
+		pBytes := s.currentPeerBytesLocked(peerKey)
+		maxPeerBytes := s.maxPeerMempoolBytes()
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool byte quota (%d + %d > %d)\n",
+			tx.ID, ShortID(peerKey), pBytes, txSize, maxPeerBytes)
+		return
+	}
+	if s.currentPeerTxCountLocked(peerKey) >= s.maxPeerMempoolTx() {
+		pCount := s.currentPeerTxCountLocked(peerKey)
+		maxPeerTx := s.maxPeerMempoolTx()
+		s.MempoolMux.Unlock()
+		fmt.Printf("⚠️  [HandleTx] Rejected TX %x: peer %s exceeded mempool count quota (%d/%d)\n",
+			tx.ID, ShortID(peerKey), pCount, maxPeerTx)
+		return
+	}
+
+	// Mempool Double-Spend Check:
 	// Reject if any input outpoint is already consumed by a pending transaction.
 	for _, vin := range tx.Vin {
 		inputKey := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
@@ -1113,6 +1167,7 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 			for _, evin := range existing.Tx.Vin {
 				existingKey := hex.EncodeToString(evin.Txid) + ":" + fmt.Sprintf("%d", evin.Vout)
 				if inputKey == existingKey {
+					s.MempoolMux.Unlock()
 					fmt.Printf("⚠️  [HandleTx] Rejected TX %x: double-spend attempt against mempool TX %s\n", tx.ID, existingID)
 					return
 				}
@@ -1120,8 +1175,6 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		}
 	}
 
-	// ── 7. Admit & Relay ─────────────────────────────────────────────────────
-	fmt.Printf("New core.Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
 	item := core.MempoolItem{
 		Tx:       tx,
 		AddedAt:  time.Now().Unix(),
@@ -1129,6 +1182,10 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 		ByteSize: txSize,
 	}
 	s.addToMempoolLocked(item)
+	s.MempoolMux.Unlock()
+
+	// ── 5. Notifications & Peer Relay (Outside Lock) ─────────────────────────
+	fmt.Printf("New core.Transaction in Mempool: %x (Fee: %d)\n", tx.ID, fee)
 
 	if s.OnNewTx != nil {
 		s.OnNewTx(&tx)
@@ -1160,7 +1217,6 @@ func (s *Server) AttemptMine() {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("⚡ Panic in AttemptMine: %v", r)
-			// Ensure map isn't locked indefinitely if it panics mid-mux
 		}
 	}()
 
@@ -1168,12 +1224,24 @@ func (s *Server) AttemptMine() {
 		return
 	}
 
+	// ── 1. Snapshot Candidate Transactions (Under Lock) ──────────────────────
 	s.MempoolMux.Lock()
-	defer s.MempoolMux.Unlock()
-
 	if len(s.Mempool) == 0 {
+		s.MempoolMux.Unlock()
 		return
 	}
+
+	type candidateTx struct {
+		id   string
+		item core.MempoolItem
+	}
+	candidates := make([]candidateTx, 0, len(s.Mempool))
+	snapshot := make(map[string]core.MempoolItem, len(s.Mempool))
+	for id, item := range s.Mempool {
+		candidates = append(candidates, candidateTx{id: id, item: item})
+		snapshot[id] = item
+	}
+	s.MempoolMux.Unlock()
 
 	fmt.Println("Forging new block with mempool transactions...")
 
@@ -1183,22 +1251,30 @@ func (s *Server) AttemptMine() {
 	}
 
 	var validTxs []txWithFee
+	var invalidIDs []string
 	var totalFees int64
 
-	for id := range s.Mempool {
-		item := s.Mempool[id]
-		tx := item.Tx
-		if s.Blockchain.VerifyTransactionWithMempool(&tx, s.Mempool) {
-			fee, err := s.UTXOSet.CalculateFee(&tx, s.Mempool)
+	// ── 2. Candidate Validation & Fee Calculation (Outside Lock) ─────────────
+	for _, c := range candidates {
+		tx := c.item.Tx
+		if s.Blockchain.VerifyTransactionWithMempool(&tx, snapshot) {
+			fee, err := s.UTXOSet.CalculateFee(&tx, snapshot)
 			if err == nil && fee >= 0 {
 				validTxs = append(validTxs, txWithFee{tx: &tx, fee: fee})
 			} else {
-				// Invalid fee (or dependencies missing)
-				s.removeFromMempoolLocked(id)
+				invalidIDs = append(invalidIDs, c.id)
 			}
 		} else {
-			s.removeFromMempoolLocked(id) // Clear invalid tx
+			invalidIDs = append(invalidIDs, c.id)
 		}
+	}
+
+	if len(invalidIDs) > 0 {
+		s.MempoolMux.Lock()
+		for _, id := range invalidIDs {
+			s.removeFromMempoolLocked(id)
+		}
+		s.MempoolMux.Unlock()
 	}
 
 	if len(validTxs) == 0 {
@@ -1207,6 +1283,9 @@ func (s *Server) AttemptMine() {
 	}
 
 	sort.Slice(validTxs, func(i, j int) bool {
+		if validTxs[i].fee == validTxs[j].fee {
+			return bytes.Compare(validTxs[i].tx.ID, validTxs[j].tx.ID) < 0
+		}
 		return validTxs[i].fee > validTxs[j].fee
 	})
 
@@ -1232,9 +1311,9 @@ func (s *Server) AttemptMine() {
 	if !s.UTXOSet.ValidateBlockTransactions(prospectiveBlock) {
 		fmt.Println("⚠️  Mempool contains conflicting transactions. Evicting conflicts...")
 
-		// Build a set of consumed inputs to detect conflicts
 		spentInputs := make(map[string]string) // input outpoint -> first txID that claimed it
 		var cleanTxs []txWithFee
+		var conflictIDs []string
 		totalFees = 0
 
 		for _, twf := range validTxs {
@@ -1244,7 +1323,7 @@ func (s *Server) AttemptMine() {
 				key := hex.EncodeToString(vin.Txid) + ":" + fmt.Sprintf("%d", vin.Vout)
 				if claimer, exists := spentInputs[key]; exists {
 					fmt.Printf("  ↳ Evicted TX %s (conflicts with %s on input %s)\n", tid, claimer, key)
-					s.removeFromMempoolLocked(tid)
+					conflictIDs = append(conflictIDs, tid)
 					conflict = true
 					break
 				}
@@ -1257,6 +1336,14 @@ func (s *Server) AttemptMine() {
 				cleanTxs = append(cleanTxs, twf)
 				totalFees += twf.fee
 			}
+		}
+
+		if len(conflictIDs) > 0 {
+			s.MempoolMux.Lock()
+			for _, id := range conflictIDs {
+				s.removeFromMempoolLocked(id)
+			}
+			s.MempoolMux.Unlock()
 		}
 
 		if len(cleanTxs) == 0 {
@@ -1279,29 +1366,34 @@ func (s *Server) AttemptMine() {
 		txs = append([]*core.Transaction{cbTx}, txs...) // Coinbase first
 	}
 
+	// ── 3. Block Forging (Outside Lock) ──────────────────────────────────────
 	newBlock, err := s.Blockchain.ForgeBlockWithUTXO(txs, *s.ValidatorPrivKey, s.UTXOSet)
 	if err != nil {
 		fmt.Printf("⚠️ ForgeBlock failed: %v\n", err)
 		return
 	}
-	if s.OnNewBlock != nil {
-		s.OnNewBlock(newBlock)
-	}
 
-	// Selectively evict only the transactions that were included in the new block.
-	// Legitimate unconfirmed transactions that were not included (e.g. arrived
-	// during mining or deferred due to block-size limits) are preserved.
+	// ── 4. Evict Mined Transactions (Under Lock) ─────────────────────────────
+	s.MempoolMux.Lock()
 	for _, tx := range newBlock.Transactions {
 		if !tx.IsCoinbase() {
 			s.removeFromMempoolLocked(hex.EncodeToString(tx.ID))
 		}
 	}
+	s.MempoolMux.Unlock()
+
+	// ── 5. Notifications & Peer Relay (Outside Lock) ─────────────────────────
+	if s.OnNewBlock != nil {
+		s.OnNewBlock(newBlock)
+	}
 
 	fmt.Printf("New block forged: %x (Reward: %d | Sub: %d + Fee: %d)\n", newBlock.Hash, totalReward, subsidy, totalFees)
 
-	peers := s.Host.Network().Peers()
-	for _, p := range peers {
-		s.SendInv(p, "block", [][]byte{newBlock.Hash})
+	if s.Host != nil {
+		peers := s.Host.Network().Peers()
+		for _, p := range peers {
+			s.SendInv(p, "block", [][]byte{newBlock.Hash})
+		}
 	}
 }
 
