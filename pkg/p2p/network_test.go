@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -421,5 +423,120 @@ func TestHandleStreamReleasesPermitAfterTimeout(t *testing.T) {
 	}
 	if server.ActiveStreams() != 1 {
 		t.Fatalf("expected 1 active stream for second stream, got %d", server.ActiveStreams())
+	}
+}
+
+func TestMiningLoopStopsOnContextCancel(t *testing.T) {
+	server := &Server{
+		MinerAddr: "test-miner",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		server.StartMiningLoop(ctx)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+		// Succeeded
+	case <-time.After(1 * time.Second):
+		t.Fatal("StartMiningLoop did not stop after context cancel")
+	}
+}
+
+func TestShutdownWaitsForMining(t *testing.T) {
+	miningStarted := make(chan struct{})
+	continueMining := make(chan struct{})
+	stopDone := make(chan struct{})
+
+	tickCh := make(chan time.Time, 1)
+	server := &Server{
+		MinerAddr: "test-miner",
+		miningHook: func() {
+			close(miningStarted)
+			<-continueMining
+		},
+		newTicker: func(d time.Duration) (<-chan time.Time, func()) {
+			return tickCh, func() {}
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go server.StartMiningLoop(ctx)
+
+	// Trigger a tick to begin mining
+	tickCh <- time.Now()
+
+	// Wait until mining has actively started inside miningHook
+	select {
+	case <-miningStarted:
+	case <-time.After(1 * time.Second):
+		t.Fatal("mining did not start")
+	}
+
+	// Concurrently invoke Stop
+	go func() {
+		server.Stop()
+		close(stopDone)
+	}()
+
+	// Verify Stop is blocked waiting for in-progress mining
+	select {
+	case <-stopDone:
+		t.Fatal("server.Stop() returned while mining was still in progress")
+	case <-time.After(50 * time.Millisecond):
+		// Expected: Stop is waiting
+	}
+
+	// Allow mining to complete
+	close(continueMining)
+
+	// Verify Stop unblocks cleanly
+	select {
+	case <-stopDone:
+		// Success: Stop waited for mining to finish
+	case <-time.After(1 * time.Second):
+		t.Fatal("server.Stop() did not finish after mining completed")
+	}
+}
+
+func TestMiningLoopStopsTicker(t *testing.T) {
+	var stopped atomic.Bool
+	tickCh := make(chan time.Time, 1)
+	server := &Server{
+		MinerAddr: "test-miner",
+		newTicker: func(d time.Duration) (<-chan time.Time, func()) {
+			return tickCh, func() {
+				stopped.Store(true)
+			}
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+
+	go func() {
+		server.StartMiningLoop(ctx)
+		close(done)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		t.Fatal("StartMiningLoop did not stop after context cancel")
+	}
+
+	if !stopped.Load() {
+		t.Fatal("StartMiningLoop did not stop ticker on exit")
 	}
 }

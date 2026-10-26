@@ -103,6 +103,11 @@ type Server struct {
 	cancel        context.CancelFunc
 	closed        bool
 
+	MiningInterval time.Duration
+	miningWg       sync.WaitGroup
+	newTicker      func(time.Duration) (<-chan time.Time, func())
+	miningHook     func()
+
 	SyncingFrom    peer.ID             // Peer we are currently syncing from
 	IsSyncing      bool                // True while IBD is in progress
 	BlockBuffer    map[int]*core.Block // Height → core.Block buffer for ordered application
@@ -448,6 +453,16 @@ func (s *Server) Stop() {
 	s.streamMux.Unlock()
 
 	s.streamWg.Wait()
+	s.miningWg.Wait()
+}
+
+// Context returns the server lifecycle context.
+func (s *Server) Context() context.Context {
+	s.streamMux.Lock()
+	s.initStreamStateLocked()
+	ctx := s.ctx
+	s.streamMux.Unlock()
+	return ctx
 }
 
 func (s *Server) HandleStream(stream network.Stream) {
@@ -1201,26 +1216,100 @@ func (s *Server) HandleTx(request []byte, peerID peer.ID) {
 	}
 }
 
-func (s *Server) StartMiningLoop() {
+func (s *Server) ticker(d time.Duration) (<-chan time.Time, func()) {
+	if s.newTicker != nil {
+		return s.newTicker(d)
+	}
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
+
+func (s *Server) isCancelled(ctx context.Context) bool {
+	if ctx != nil && ctx.Err() != nil {
+		return true
+	}
+	s.streamMux.Lock()
+	defer s.streamMux.Unlock()
+	return s.closed || (s.ctx != nil && s.ctx.Err() != nil)
+}
+
+func (s *Server) StartMiningLoop(ctx context.Context) {
 	if s.MinerAddr == "" {
 		return
 	}
-	fmt.Println("⛏️  Mining Loop started (Interval: 10s)")
-	ticker := time.NewTicker(10 * time.Second)
 
-	for range ticker.C {
-		s.AttemptMine()
+	s.streamMux.Lock()
+	s.initStreamStateLocked()
+	if s.closed || (s.ctx != nil && s.ctx.Err() != nil) {
+		s.streamMux.Unlock()
+		return
+	}
+	serverCtx := s.ctx
+	s.miningWg.Add(1)
+	s.streamMux.Unlock()
+
+	defer s.miningWg.Done()
+
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	interval := s.MiningInterval
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+
+	tickerChan, stopTicker := s.ticker(interval)
+	defer stopTicker()
+
+	fmt.Printf("⛏️  Mining Loop started (Interval: %v)\n", interval)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-serverCtx.Done():
+			return
+		case <-tickerChan:
+			s.AttemptMineContext(ctx)
+		}
 	}
 }
 
 func (s *Server) AttemptMine() {
+	s.AttemptMineContext(context.Background())
+}
+
+func (s *Server) AttemptMineContext(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("⚡ Panic in AttemptMine: %v", r)
 		}
 	}()
 
-	if s.MinerAddr == "" || s.ValidatorPrivKey == nil {
+	s.streamMux.Lock()
+	if s.closed || (s.ctx != nil && s.ctx.Err() != nil) {
+		s.streamMux.Unlock()
+		return
+	}
+	s.miningWg.Add(1)
+	s.streamMux.Unlock()
+
+	defer s.miningWg.Done()
+
+	if s.isCancelled(ctx) {
+		return
+	}
+
+	if s.miningHook != nil {
+		s.miningHook()
+	}
+
+	if s.isCancelled(ctx) {
+		return
+	}
+
+	if s.MinerAddr == "" || s.ValidatorPrivKey == nil || s.Blockchain == nil || s.UTXOSet == nil {
 		return
 	}
 
@@ -1243,6 +1332,10 @@ func (s *Server) AttemptMine() {
 	}
 	s.MempoolMux.Unlock()
 
+	if s.isCancelled(ctx) {
+		return
+	}
+
 	fmt.Println("Forging new block with mempool transactions...")
 
 	type txWithFee struct {
@@ -1256,6 +1349,9 @@ func (s *Server) AttemptMine() {
 
 	// ── 2. Candidate Validation & Fee Calculation (Outside Lock) ─────────────
 	for _, c := range candidates {
+		if s.isCancelled(ctx) {
+			return
+		}
 		tx := c.item.Tx
 		if s.Blockchain.VerifyTransactionWithMempool(&tx, snapshot) {
 			fee, err := s.UTXOSet.CalculateFee(&tx, snapshot)
@@ -1277,8 +1373,10 @@ func (s *Server) AttemptMine() {
 		s.MempoolMux.Unlock()
 	}
 
-	if len(validTxs) == 0 {
-		fmt.Println("All transactions in mempool are invalid.")
+	if s.isCancelled(ctx) || len(validTxs) == 0 {
+		if len(validTxs) == 0 {
+			fmt.Println("All transactions in mempool are invalid.")
+		}
 		return
 	}
 
@@ -1303,6 +1401,10 @@ func (s *Server) AttemptMine() {
 	cbTx, err := core.NewCoinbaseTX(s.MinerAddr, "", totalReward)
 	if err != nil {
 		fmt.Printf("⚠️ Failed to create coinbase tx: %v\n", err)
+		return
+	}
+
+	if s.isCancelled(ctx) {
 		return
 	}
 
@@ -1351,6 +1453,10 @@ func (s *Server) AttemptMine() {
 			return
 		}
 
+		if s.isCancelled(ctx) {
+			return
+		}
+
 		// Rebuild the block with clean transactions
 		totalReward = subsidy + totalFees
 		cbTx, err = core.NewCoinbaseTX(s.MinerAddr, "", totalReward)
@@ -1364,6 +1470,10 @@ func (s *Server) AttemptMine() {
 		}
 	} else {
 		txs = append([]*core.Transaction{cbTx}, txs...) // Coinbase first
+	}
+
+	if s.isCancelled(ctx) {
+		return
 	}
 
 	// ── 3. Block Forging (Outside Lock) ──────────────────────────────────────
@@ -1383,13 +1493,17 @@ func (s *Server) AttemptMine() {
 	s.MempoolMux.Unlock()
 
 	// ── 5. Notifications & Peer Relay (Outside Lock) ─────────────────────────
+	if s.isCancelled(ctx) {
+		return
+	}
+
 	if s.OnNewBlock != nil {
 		s.OnNewBlock(newBlock)
 	}
 
 	fmt.Printf("New block forged: %x (Reward: %d | Sub: %d + Fee: %d)\n", newBlock.Hash, totalReward, subsidy, totalFees)
 
-	if s.Host != nil {
+	if s.Host != nil && !s.isCancelled(ctx) {
 		peers := s.Host.Network().Peers()
 		for _, p := range peers {
 			s.SendInv(p, "block", [][]byte{newBlock.Hash})

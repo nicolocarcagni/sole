@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"encoding/hex"
 	"encoding/json"
@@ -410,7 +411,7 @@ func startNode(cmd *cobra.Command, args []string) {
 
 	// Start Periodic Mining Loop (if miner)
 	if nodeMiner != "" {
-		go server.StartMiningLoop()
+		go server.StartMiningLoop(context.Background())
 	}
 
 	// Graceful Shutdown Handling
