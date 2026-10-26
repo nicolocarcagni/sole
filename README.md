@@ -54,7 +54,6 @@ Unlike legacy compute-intensive blockchains, SOLE implements an energy-efficient
 | 🔒 **Persistent UTXO Engine** | Bitcoin-inspired Unspent Transaction Output model with cryptographic ECDSA signatures on the NIST P-256 (`secp256r1`) curve and SHA-256/RIPEMD-160 hashing. |
 | 🌐 **libp2p Hybrid Networking** | Enterprise peer-to-peer transport with NAT traversal, automatic mDNS peer discovery, DHT routing, and aggregate/per-peer stream quotas against DoS. |
 | 📝 **80-Byte `OP_RETURN` Notarization** | Native zero-value provably unspendable outputs for on-chain credential notarization (CFU credits, exam certifications, diplomas) without state bloat. |
-| 🤖 **AI Agent & Micro-Economy Ready** | Designed for programmatic micro-transactions, LLM agent simulation frameworks (`campus_sim.py`), and seamless custodial Telegram integrations. |
 
 </div>
 
