@@ -22,13 +22,20 @@ func NewMerkleTree(data [][]byte) *MerkleTree {
 		return &MerkleTree{RootNode: nil}
 	}
 
-	var nodes []MerkleNode
-
-	if len(data)%2 != 0 {
-		data = append(data, data[len(data)-1])
+	capacity := len(data)
+	if capacity%2 != 0 {
+		capacity++
 	}
 
-	for _, datum := range data {
+	leaves := make([][]byte, len(data), capacity)
+	copy(leaves, data)
+
+	if len(leaves)%2 != 0 {
+		leaves = append(leaves, leaves[len(leaves)-1])
+	}
+
+	nodes := make([]MerkleNode, 0, len(leaves))
+	for _, datum := range leaves {
 		node := NewMerkleNode(nil, nil, datum)
 		nodes = append(nodes, *node)
 	}

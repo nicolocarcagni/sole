@@ -128,3 +128,105 @@ func TestGetMerklePath(t *testing.T) {
 		t.Errorf("Expected 'transaction not found in merkle tree', got: %v", err)
 	}
 }
+
+func TestNewMerkleTreeDoesNotMutateInputWithSpareCapacity(t *testing.T) {
+	// Allocate a slice with capacity larger than length and an odd number of elements.
+	// Index 3 is a sentinel value in the caller's backing array.
+	backing := make([][]byte, 4)
+	backing[0] = []byte("tx1")
+	backing[1] = []byte("tx2")
+	backing[2] = []byte("tx3")
+	sentinel := []byte("sentinel-do-not-overwrite")
+	backing[3] = sentinel
+
+	// Pass a slice of length 3 (odd) with capacity 4
+	input := backing[:3]
+	_ = NewMerkleTree(input)
+
+	// If NewMerkleTree appends directly to the input slice, it will overwrite backing[3] with "tx3"
+	if !bytes.Equal(backing[3], sentinel) {
+		t.Fatalf("NewMerkleTree mutated caller's underlying slice capacity: expected %q, got %q", sentinel, backing[3])
+	}
+	if len(input) != 3 {
+		t.Fatalf("expected input length to remain 3, got %d", len(input))
+	}
+	if !bytes.Equal(input[0], []byte("tx1")) || !bytes.Equal(input[1], []byte("tx2")) || !bytes.Equal(input[2], []byte("tx3")) {
+		t.Fatalf("NewMerkleTree mutated input slice elements")
+	}
+}
+
+func TestMerkleOddLeaves(t *testing.T) {
+	tests := []struct {
+		name   string
+		leaves [][]byte
+	}{
+		{
+			name:   "1 leaf",
+			leaves: [][]byte{[]byte("tx1")},
+		},
+		{
+			name:   "3 leaves",
+			leaves: [][]byte{[]byte("tx1"), []byte("tx2"), []byte("tx3")},
+		},
+		{
+			name:   "5 leaves",
+			leaves: [][]byte{[]byte("tx1"), []byte("tx2"), []byte("tx3"), []byte("tx4"), []byte("tx5")},
+		},
+		{
+			name:   "7 leaves",
+			leaves: [][]byte{[]byte("tx1"), []byte("tx2"), []byte("tx3"), []byte("tx4"), []byte("tx5"), []byte("tx6"), []byte("tx7")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalLeaves := make([][]byte, len(tt.leaves))
+			for i, leaf := range tt.leaves {
+				originalLeaves[i] = append([]byte(nil), leaf...)
+			}
+
+			tree := NewMerkleTree(tt.leaves)
+			if tree == nil || tree.RootNode == nil {
+				t.Fatalf("expected non-nil tree and root node for %s", tt.name)
+			}
+
+			// Verify caller's input slice was not modified
+			if len(tt.leaves) != len(originalLeaves) {
+				t.Fatalf("input length modified: expected %d, got %d", len(originalLeaves), len(tt.leaves))
+			}
+			for i := range tt.leaves {
+				if !bytes.Equal(tt.leaves[i], originalLeaves[i]) {
+					t.Fatalf("leaf %d modified in caller's slice", i)
+				}
+			}
+
+			// Verify GetMerklePath produces valid proofs for all leaves
+			for _, leaf := range tt.leaves {
+				path, err := tree.GetMerklePath(leaf)
+				if err != nil {
+					t.Fatalf("GetMerklePath failed for leaf %s: %v", string(leaf), err)
+				}
+
+				current := sha256.Sum256(leaf)
+				currentSlice := current[:]
+				for _, step := range path {
+					stepBytes, err := hex.DecodeString(step.Hash)
+					if err != nil {
+						t.Fatalf("invalid hex in proof step: %v", err)
+					}
+					if step.Direction == "L" {
+						h := sha256.Sum256(append(stepBytes, currentSlice...))
+						currentSlice = h[:]
+					} else {
+						h := sha256.Sum256(append(currentSlice, stepBytes...))
+						currentSlice = h[:]
+					}
+				}
+
+				if !bytes.Equal(currentSlice, tree.RootNode.Data) {
+					t.Fatalf("merkle path proof failed for leaf %s in %s", string(leaf), tt.name)
+				}
+			}
+		})
+	}
+}
