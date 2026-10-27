@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -21,7 +23,11 @@ type EventHub struct {
 	Register   chan chan []byte
 	Unregister chan chan []byte
 	Broadcast  chan []byte
-	mux        sync.Mutex
+	quit       chan struct{}
+	done       chan struct{}
+	started    atomic.Bool
+	stopOnce   sync.Once
+	mux        sync.RWMutex
 }
 
 func NewEventHub() *EventHub {
@@ -30,12 +36,25 @@ func NewEventHub() *EventHub {
 		Register:   make(chan chan []byte),
 		Unregister: make(chan chan []byte),
 		Broadcast:  make(chan []byte, 256),
+		quit:       make(chan struct{}),
+		done:       make(chan struct{}),
 	}
 }
 
 func (h *EventHub) Run() {
+	h.started.Store(true)
+	defer close(h.done)
 	for {
 		select {
+		case <-h.quit:
+			h.mux.Lock()
+			for client := range h.clients {
+				delete(h.clients, client)
+				close(client)
+			}
+			h.mux.Unlock()
+			return
+
 		case client := <-h.Register:
 			h.mux.Lock()
 			h.clients[client] = true
@@ -64,7 +83,35 @@ func (h *EventHub) Run() {
 	}
 }
 
+// Stop terminates the EventHub, closes all client channels, and waits for Run to exit.
+func (h *EventHub) Stop() {
+	if h == nil {
+		return
+	}
+	h.stopOnce.Do(func() {
+		close(h.quit)
+	})
+	if h.started.Load() {
+		<-h.done
+	}
+}
+
+// ClientCount returns the number of currently registered WebSocket client channels.
+func (h *EventHub) ClientCount() int {
+	if h == nil {
+		return 0
+	}
+	h.mux.RLock()
+	defer h.mux.RUnlock()
+	return len(h.clients)
+}
+
 func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
+	if hub == nil || hub.Register == nil {
+		http.Error(w, "WebSocket hub unavailable", http.StatusServiceUnavailable)
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("⚠️  [WS] Upgrade failed: %v", err)
@@ -72,11 +119,19 @@ func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
 	}
 
 	send := make(chan []byte, 64)
-	hub.Register <- send
+	select {
+	case hub.Register <- send:
+	case <-hub.quit:
+		_ = conn.Close()
+		return
+	}
 
 	defer func() {
-		hub.Unregister <- send
-		conn.Close()
+		select {
+		case hub.Unregister <- send:
+		case <-hub.quit:
+		}
+		_ = conn.Close()
 	}()
 
 	// Writer goroutine: relay hub broadcasts to this WebSocket connection
@@ -86,6 +141,9 @@ func handleWs(hub *EventHub, w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Send channel was closed (hub stopped or client unregistered)
+		_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+		_ = conn.Close()
 	}()
 
 	// Reader loop: keep the connection alive, discard incoming messages
@@ -128,7 +186,7 @@ type WsBlockEvent struct {
 }
 
 func BroadcastMempoolTx(hub *EventHub, tx *core.Transaction) {
-	if hub == nil {
+	if hub == nil || hub.Broadcast == nil {
 		return
 	}
 
@@ -174,12 +232,13 @@ func BroadcastMempoolTx(hub *EventHub, tx *core.Transaction) {
 
 	select {
 	case hub.Broadcast <- payload:
+	case <-hub.quit:
 	default:
 	}
 }
 
 func BroadcastBlock(hub *EventHub, block *core.Block) {
-	if hub == nil {
+	if hub == nil || hub.Broadcast == nil {
 		return
 	}
 
@@ -230,6 +289,7 @@ func BroadcastBlock(hub *EventHub, block *core.Block) {
 
 	select {
 	case hub.Broadcast <- payload:
+	case <-hub.quit:
 	default:
 	}
 }

@@ -2,11 +2,15 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/dgraph-io/badger/v3"
@@ -19,18 +23,22 @@ import (
 )
 
 type RestServer struct {
-	P2P        *p2p.Server
-	MempoolHub *EventHub
-	BlockHub   *EventHub
+	P2P          *p2p.Server
+	MempoolHub   *EventHub
+	BlockHub     *EventHub
+	httpServer   *http.Server
+	router       *mux.Router
+	shutdownOnce sync.Once
 }
 
-func StartRestServer(server *p2p.Server, listenHost string, port int) {
+// NewRestServer initializes a RestServer with active WebSocket EventHubs and configured routes.
+func NewRestServer(server *p2p.Server) *RestServer {
 	mempoolHub := NewEventHub()
 	go mempoolHub.Run()
 	blockHub := NewEventHub()
 	go blockHub.Run()
 
-	rs := RestServer{
+	rs := &RestServer{
 		P2P:        server,
 		MempoolHub: mempoolHub,
 		BlockHub:   blockHub,
@@ -45,6 +53,11 @@ func StartRestServer(server *p2p.Server, listenHost string, port int) {
 		}
 	}
 
+	rs.router = rs.setupRouter()
+	return rs
+}
+
+func (rs *RestServer) setupRouter() *mux.Router {
 	router := mux.NewRouter()
 	router.Use(commonMiddleware)
 
@@ -79,17 +92,70 @@ func StartRestServer(server *p2p.Server, listenHost string, port int) {
 		handleWs(rs.BlockHub, w, r)
 	})
 
-	addr := fmt.Sprintf("%s:%d", listenHost, port)
-	fmt.Printf("🚀 API p2p.Server started on http://%s\n", addr)
+	return router
+}
 
-	srv := &http.Server{
-		Handler:      CORSMiddleware(router),
-		Addr:         addr,
+// Router returns the underlying HTTP router.
+func (rs *RestServer) Router() *mux.Router {
+	return rs.router
+}
+
+// Serve accepts incoming HTTP connections on the listener l and serves API requests.
+func (rs *RestServer) Serve(l net.Listener) error {
+	rs.httpServer = &http.Server{
+		Handler:      CORSMiddleware(rs.router),
 		WriteTimeout: 15 * time.Second,
 		ReadTimeout:  15 * time.Second,
 	}
 
-	log.Fatal(srv.ListenAndServe())
+	err := rs.httpServer.Serve(l)
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
+}
+
+// Start binds to addr and serves incoming HTTP requests until stopped.
+func (rs *RestServer) Start(addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+	return rs.Serve(l)
+}
+
+// Shutdown gracefully stops the HTTP server and terminates both WebSocket EventHubs.
+func (rs *RestServer) Shutdown(ctx context.Context) error {
+	var err error
+	rs.shutdownOnce.Do(func() {
+		if rs.httpServer != nil {
+			err = rs.httpServer.Shutdown(ctx)
+		}
+		if rs.MempoolHub != nil {
+			rs.MempoolHub.Stop()
+		}
+		if rs.BlockHub != nil {
+			rs.BlockHub.Stop()
+		}
+	})
+	return err
+}
+
+// Stop cleanly shuts down the server with a default 5-second timeout.
+func (rs *RestServer) Stop() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = rs.Shutdown(ctx)
+}
+
+func StartRestServer(server *p2p.Server, listenHost string, port int) {
+	rs := NewRestServer(server)
+	addr := fmt.Sprintf("%s:%d", listenHost, port)
+	fmt.Printf("🚀 API p2p.Server started on http://%s\n", addr)
+
+	if err := rs.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Printf("API server error: %v\n", err)
+	}
 }
 
 func commonMiddleware(next http.Handler) http.Handler {
